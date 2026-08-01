@@ -53,6 +53,16 @@ test('wetty is optional so an app store install is never left broken', () => {
   assert.ok(pkg.optionalDependencies.wetty)
 })
 
+test('the app store icon is WeTTYs own', () => {
+  // Copied from the wetty package rather than drawn here, so the entry is
+  // recognisable as WeTTY in the app store and the admin UI webapp list.
+  assert.equal(pkg.signalk.appIcon, './public/wetty-icon.svg')
+  const icon = fs.readFileSync(path.join(ROOT, 'public/wetty-icon.svg'), 'utf8')
+  assert.match(icon, /butlerx\/wetty/, 'the icon must keep its attribution')
+  assert.match(icon, /MIT/)
+  assert.match(icon, /<svg[^>]*viewBox="0 0 512 512"/)
+})
+
 test('declared app store assets exist on disk', () => {
   const declared = [
     pkg.signalk.appIcon,

@@ -28,7 +28,7 @@
   ],
   "signalk-plugin-enabled-by-default": false,
   "signalk": {
-    "appIcon": "./public/app-icon.svg",
+    "appIcon": "./public/wetty-icon.svg",
     "displayName": "WeTTY Terminal",
     "screenshots": [
       "./public/screenshot-terminal.svg",
