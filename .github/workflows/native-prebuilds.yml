@@ -31,13 +31,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          cache: npm
 
       - name: Install native build tools
         run: sudo apt-get update && sudo apt-get install -y python3 make g++ build-essential
 
       - name: Install dependencies
-        run: npm ci --include=optional
+        run: npm install --include=optional
 
       - name: Build node-pty prebuild
         run: npm run build:node-pty-prebuild
