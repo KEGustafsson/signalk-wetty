@@ -1,0 +1,6 @@
+dist/
+node_modules/
+coverage/
+*.tgz
+.dockerignore
+docker/entrypoint.sh
