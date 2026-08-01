@@ -24,9 +24,24 @@ const skip = !nativeAvailable()
 
 const createPlugin = load('index.js')
 
+// These tests are about WeTTY serving real traffic, not about SSH. Stubbing the
+// probe keeps them from depending on whether the machine running them happens
+// to have an sshd listening; ssh-probe.test.js covers the real thing.
+const withStubbedSsh = (app) =>
+  createPlugin(app, {
+    probeSsh: async (host, port) => ({
+      reachable: true,
+      host,
+      port,
+      banner: 'SSH-2.0-OpenSSH_9.6p1',
+      error: null,
+      code: null
+    })
+  })
+
 test('the plugin serves a real WeTTY instance', { skip }, async (t) => {
   const app = createMockApp()
-  const plugin = createPlugin(app)
+  const plugin = withStubbedSsh(app)
   const { router, call } = createMockRouter()
   plugin.registerWithRouter(router)
 
@@ -61,7 +76,7 @@ test(
   { skip },
   async (t) => {
     const app = createMockApp()
-    const plugin = createPlugin(app)
+    const plugin = withStubbedSsh(app)
     const port = await freePort()
     t.after(() => plugin.stop())
 
@@ -82,7 +97,7 @@ test(
   { skip },
   async (t) => {
     const app = createMockApp()
-    const plugin = createPlugin(app)
+    const plugin = withStubbedSsh(app)
     const port = await freePort()
     t.after(() => plugin.stop())
 
@@ -94,7 +109,7 @@ test(
 
 test('iframe embedding can be locked down', { skip }, async (t) => {
   const app = createMockApp()
-  const plugin = createPlugin(app)
+  const plugin = withStubbedSsh(app)
   const port = await freePort()
   t.after(() => plugin.stop())
 
@@ -114,7 +129,7 @@ test(
     t.after(() => new Promise((resolve) => blocker.close(resolve)))
 
     const app = createMockApp()
-    const plugin = createPlugin(app)
+    const plugin = withStubbedSsh(app)
     t.after(() => plugin.stop())
 
     await plugin.start({ port, host: '127.0.0.1' })

@@ -41,6 +41,19 @@ export interface RebuildState {
   output: string
 }
 
+/** Result of the SSH reachability check, and what to do when it failed. */
+export interface SshCheck {
+  /** False when the check does not apply, i.e. in local mode. */
+  checked: boolean
+  reachable: boolean
+  host: string
+  port: number
+  banner: string | null
+  error: string | null
+  help: string
+  checkedAt: string | null
+}
+
 /** Payload of `GET /plugins/signalk-wetty/status`, consumed by the webapp. */
 export interface PluginStatus {
   running: boolean
@@ -61,6 +74,7 @@ export interface PluginStatus {
     help: string
   }
   rebuild: RebuildState
+  ssh: SshCheck
 }
 
 export interface SignalKPlugin {

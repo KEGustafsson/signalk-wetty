@@ -53,6 +53,15 @@ test('the rebuild is polled rather than awaited on one long request', () => {
   assert.match(html, /status\.rebuild\.running/)
 })
 
+test('a missing SSH server is surfaced above the terminal', () => {
+  // The terminal still loads without sshd — it is the sessions inside it that
+  // fail — so the warning has to appear before the user types anything.
+  assert.match(html, /sshWarning/)
+  assert.match(html, /status\.ssh\.checked/)
+  assert.match(html, /status\.ssh\.help/)
+  assert.match(html, /\$\{API\}\/ssh-check/)
+})
+
 test('every branch of the status payload has a rendering path', () => {
   for (const marker of [
     'renderTerminal',
@@ -60,6 +69,7 @@ test('every branch of the status payload has a rendering path', () => {
     'status.native.available',
     'status.allowIframe',
     'status.loopbackOnly',
+    'status.ssh.reachable',
     'res.status === 401'
   ]) {
     assert.ok(html.includes(marker), `webapp does not handle ${marker}`)

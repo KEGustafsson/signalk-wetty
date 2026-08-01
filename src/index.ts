@@ -15,6 +15,7 @@ import {
   rebuildNodePty,
   type NativeProbeResult
 } from './native'
+import { probeSshServer, sshHelpText } from './ssh-probe'
 import { WettyRunner } from './wetty-runner'
 import type { PluginDeps } from './deps'
 import type {
@@ -23,7 +24,8 @@ import type {
   PluginStatus,
   RebuildState,
   RouteResponse,
-  SignalKPlugin
+  SignalKPlugin,
+  SshCheck
 } from './types'
 
 const describeError = (err: unknown): string =>
@@ -37,13 +39,26 @@ const idleRebuild = (): RebuildState => ({
   output: ''
 })
 
+/** Local mode never shells out to ssh, so there is nothing to check. */
+const skippedSshCheck = (options: ResolvedOptions): SshCheck => ({
+  checked: false,
+  reachable: false,
+  host: options.ssh.host,
+  port: options.ssh.port,
+  banner: null,
+  error: null,
+  help: '',
+  checkedAt: null
+})
+
 const buildStatus = (
   options: ResolvedOptions,
   running: boolean,
   message: string,
   error: string | null,
   native: NativeProbeResult,
-  rebuild: RebuildState
+  rebuild: RebuildState,
+  ssh: SshCheck
 ): PluginStatus => ({
   running,
   message,
@@ -61,7 +76,8 @@ const buildStatus = (
     error: native.error ?? null,
     help: nativeHelpText(native)
   },
-  rebuild
+  rebuild,
+  ssh
 })
 
 /** Signal K plugin entry point. */
@@ -71,6 +87,7 @@ function signalkWetty(
 ): SignalKPlugin {
   const probeNative = deps.probeNative ?? probeNodePty
   const rebuildNative = deps.rebuildNative ?? rebuildNodePty
+  const probeSsh = deps.probeSsh ?? probeSshServer
   const debug = (msg: string) => {
     try {
       app.debug(msg)
@@ -86,6 +103,7 @@ function signalkWetty(
   let message = 'Not started'
   let error: string | null = null
   let rebuild: RebuildState = idleRebuild()
+  let ssh: SshCheck = skippedSshCheck(options)
 
   const setStatus = (msg: string) => {
     message = msg
@@ -129,9 +147,43 @@ function signalkWetty(
       ssh: { ...options.ssh, password: options.ssh.password ? '***' : '' }
     })
 
+  /**
+   * Checks that something is actually answering as an SSH server, so a missing
+   * sshd is reported once at start rather than as an unexplained session
+   * failure every time somebody opens the terminal.
+   */
+  const checkSsh = async (): Promise<SshCheck> => {
+    if (effectiveMode(options) !== 'ssh') {
+      return skippedSshCheck(options)
+    }
+    try {
+      const probe = await probeSsh(options.ssh.host, options.ssh.port)
+      return {
+        checked: true,
+        reachable: probe.reachable,
+        host: probe.host,
+        port: probe.port,
+        banner: probe.banner,
+        error: probe.error,
+        help: sshHelpText(probe),
+        checkedAt: new Date().toISOString()
+      }
+    } catch (err) {
+      // A probe that throws must never take the plugin down with it.
+      const detail = describeError(err)
+      debug(`SSH check failed unexpectedly: ${detail}`)
+      return {
+        ...skippedSshCheck(options),
+        checked: true,
+        error: detail
+      }
+    }
+  }
+
   const start = async (rawOptions: unknown): Promise<void> => {
     options = resolveOptions(rawOptions)
     native = probeNative()
+    ssh = skippedSshCheck(options)
 
     if (!native.available) {
       // Starting anyway would produce a page that dies on the first keystroke,
@@ -142,8 +194,19 @@ function signalkWetty(
 
     try {
       await runner.start(options)
-      setStatus(describeRunning())
       debug(`WeTTY started with ${redactedOptions()}`)
+
+      // Checked after the terminal is up: a missing SSH server is worth
+      // reporting loudly, but it is not a reason to withhold the page. The
+      // moment sshd is started, sessions work without touching the plugin.
+      ssh = await checkSsh()
+      if (ssh.checked && !ssh.reachable) {
+        setError(
+          `${describeRunning()} — but ${ssh.error}. Open the WeTTY Terminal webapp for how to fix this.`
+        )
+      } else {
+        setStatus(describeRunning())
+      }
     } catch (err) {
       const detail = describeError(err)
       const hint =
@@ -170,8 +233,42 @@ function signalkWetty(
   const registerWithRouter = (router: PluginRouterLike): void => {
     router.get('/status', (_req, res: RouteResponse) => {
       res.json(
-        buildStatus(options, runner.running, message, error, native, rebuild)
+        buildStatus(
+          options,
+          runner.running,
+          message,
+          error,
+          native,
+          rebuild,
+          ssh
+        )
       )
+    })
+
+    // Re-runs the SSH check on demand, so somebody who has just installed and
+    // started sshd can confirm it from the webapp without restarting anything.
+    router.get('/ssh-check', (_req, res: RouteResponse) => {
+      checkSsh()
+        .then((result) => {
+          ssh = result
+          if (runner.running) {
+            if (ssh.checked && !ssh.reachable) {
+              setError(
+                `${describeRunning()} — but ${ssh.error}. Open the WeTTY Terminal webapp for how to fix this.`
+              )
+            } else {
+              setStatus(describeRunning())
+            }
+          }
+          res.json(ssh)
+        })
+        .catch((err: unknown) => {
+          res.status(500).json({
+            ...skippedSshCheck(options),
+            checked: true,
+            error: describeError(err)
+          })
+        })
     })
 
     // The rebuild runs detached from the request. Compiling node-pty takes

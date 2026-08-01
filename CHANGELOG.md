@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- SSH availability check. In `ssh` mode the plugin now connects to the
+  configured SSH host at start and waits for the server's identification
+  string, so a missing or stopped sshd is reported once with instructions for
+  the platform instead of showing up as an unexplained session failure every
+  time somebody opens the terminal. The terminal still starts, the webapp shows
+  the fix above it, and `GET /plugins/signalk-wetty/ssh-check` re-runs the check
+  so a freshly started sshd can be confirmed without restarting the plugin.
+
 ### Changed
 
 - `POST /plugins/signalk-wetty/rebuild-native` now answers `202` immediately and

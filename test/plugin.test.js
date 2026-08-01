@@ -25,6 +25,24 @@ const missingNative = () => ({
   error: 'node-pty is installed but the compiled binding is missing'
 })
 
+const sshUp = async (host, port) => ({
+  reachable: true,
+  host,
+  port,
+  banner: 'SSH-2.0-OpenSSH_9.6p1',
+  error: null,
+  code: null
+})
+
+const sshDown = async (host, port) => ({
+  reachable: false,
+  host,
+  port,
+  banner: null,
+  error: `connect ECONNREFUSED ${host}:${port}`,
+  code: 'ECONNREFUSED'
+})
+
 const withFakeWetty = (overrides = {}) => {
   const app = createMockApp()
   const fake = createFakeWetty(overrides.wetty)
@@ -32,6 +50,7 @@ const withFakeWetty = (overrides = {}) => {
     loadWetty: async () => fake.module,
     probeNative: overrides.probeNative ?? availableNative,
     rebuildNative: overrides.rebuildNative,
+    probeSsh: overrides.probeSsh ?? sshUp,
     ...overrides.deps
   })
   return { app, fake, plugin }
@@ -374,6 +393,127 @@ test('a rebuild can be started again after one finished', async () => {
   assert.equal(second.statusCode, 202)
   await awaitRebuild(call)
   assert.equal(starts, 2)
+})
+
+test('a reachable SSH server leaves the plugin in a plain running state', async () => {
+  const { plugin, app } = withFakeWetty()
+  await plugin.start({})
+  assert.deepEqual(app.calls.pluginError, [])
+  assert.match(app.lastStatus(), /Terminal on/)
+  await plugin.stop()
+})
+
+test('a missing SSH server is reported without withholding the terminal', async () => {
+  // The page still has to load: the moment sshd is started, sessions work
+  // again without anybody touching the plugin.
+  const { plugin, app, fake } = withFakeWetty({ probeSsh: sshDown })
+  const { router, call } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  await plugin.start({})
+  assert.equal(fake.state.starts.length, 1, 'WeTTY should still be started')
+
+  const { body } = await call('GET /status')
+  assert.equal(body.running, true)
+  assert.equal(body.ssh.checked, true)
+  assert.equal(body.ssh.reachable, false)
+  assert.match(body.ssh.error, /ECONNREFUSED/)
+  assert.match(body.ssh.help, /openssh-server/)
+  assert.ok(body.ssh.checkedAt)
+  assert.match(app.lastError(), /ECONNREFUSED/)
+  await plugin.stop()
+})
+
+test('the SSH check reports the host and port actually configured', async () => {
+  const seen = []
+  const { plugin } = withFakeWetty({
+    probeSsh: async (host, port) => {
+      seen.push([host, port])
+      return sshDown(host, port)
+    }
+  })
+  const { router, call } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  await plugin.start({ ssh: { host: 'nav.local', port: 2222 } })
+  assert.deepEqual(seen, [['nav.local', 2222]])
+  const { body } = await call('GET /status')
+  assert.equal(body.ssh.host, 'nav.local')
+  assert.equal(body.ssh.port, 2222)
+  await plugin.stop()
+})
+
+test('local mode skips the SSH check entirely', async () => {
+  let probes = 0
+  const { plugin } = withFakeWetty({
+    probeSsh: async (host, port) => {
+      probes += 1
+      return sshDown(host, port)
+    }
+  })
+  const { router, call } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  await plugin.start({ mode: 'local' })
+  const { body } = await call('GET /status')
+  if (body.effectiveMode === 'local') {
+    assert.equal(probes, 0, 'local mode never shells out to ssh')
+    assert.equal(body.ssh.checked, false)
+  } else {
+    // Not running as root, so the plugin fell back to SSH and must check it.
+    assert.equal(probes, 1)
+    assert.equal(body.ssh.checked, true)
+  }
+  await plugin.stop()
+})
+
+test('a throwing SSH probe never takes the plugin down', async () => {
+  const { plugin, app } = withFakeWetty({
+    probeSsh: async () => {
+      throw new Error('socket exploded')
+    }
+  })
+  const { router, call } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  await plugin.start({})
+  const { body } = await call('GET /status')
+  assert.equal(body.running, true)
+  assert.match(body.ssh.error, /socket exploded/)
+  assert.deepEqual(
+    app.calls.debug.filter((m) => /SSH check failed/.test(m)).length > 0,
+    true
+  )
+  await plugin.stop()
+})
+
+test('GET /ssh-check re-runs the probe and clears the error once sshd is up', async () => {
+  // Somebody who has just installed and started sshd should be able to confirm
+  // it from the webapp without restarting the plugin.
+  let up = false
+  const { plugin, app } = withFakeWetty({
+    probeSsh: async (host, port) =>
+      up ? sshUp(host, port) : sshDown(host, port)
+  })
+  const { router, call } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  await plugin.start({})
+  assert.match(app.lastError(), /ECONNREFUSED/)
+
+  const first = await call('GET /ssh-check')
+  assert.equal(first.body.reachable, false)
+
+  up = true
+  const second = await call('GET /ssh-check')
+  assert.equal(second.body.reachable, true)
+  assert.equal(second.body.banner, 'SSH-2.0-OpenSSH_9.6p1')
+  assert.equal(second.body.help, '')
+  assert.match(app.lastStatus(), /Terminal on/)
+
+  const { body } = await call('GET /status')
+  assert.equal(body.ssh.reachable, true)
+  await plugin.stop()
 })
 
 test('the SSH password is never written to the debug log', async () => {

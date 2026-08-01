@@ -89,6 +89,37 @@ this when the server process runs as **root**; a typical `pi`/`signalk` service
 account cannot call `login(1)`. When local mode is selected but the server is not
 root, the plugin falls back to SSH and says so in its status line.
 
+### SSH availability check
+
+In `ssh` mode the plugin opens a connection to the configured SSH host on start
+and waits for the server's identification string (`SSH-2.0-…`). A plain TCP
+connect is not enough — anything can be listening on port 22, and reporting that
+as a working SSH server would send you looking in the wrong place.
+
+If nothing answers, the terminal still starts. The page loads fine without an
+SSH server; it is the sessions inside it that fail, and the moment you start
+sshd they work without touching the plugin. What you get instead is a plugin
+error saying what is missing, and a panel above the terminal in the webapp with
+the commands to fix it and a **Check again** button.
+
+On this machine, that usually means installing or starting an SSH server:
+
+```sh
+# Debian, Ubuntu, Raspberry Pi OS, OpenPlotter
+sudo apt install -y openssh-server && sudo systemctl enable --now ssh
+# Raspberry Pi OS alternative: sudo raspi-config → Interface Options → SSH
+```
+
+- **Venus OS** — enable SSH on LAN in Settings → General, or `svc -u /service/ssh`.
+- **macOS** — System Settings → General → Sharing → Remote Login.
+- **Windows** — Settings → System → Optional features → Add → OpenSSH Server,
+  then `Start-Service sshd`.
+
+For a remote SSH host the advice is about reachability instead — a firewall or a
+stopped service on that machine, not something to install locally.
+
+`local` mode does not shell out to `ssh`, so the check is skipped entirely.
+
 ### SSH settings
 
 | Option                     | Default            | Notes                                                                                                                            |
@@ -170,9 +201,31 @@ Both routes are admin-only.
   "requestedMode": "ssh",
   "effectiveMode": "ssh",
   "runningAsRoot": false,
-  "native": { "available": true, "error": null, "help": "" }
+  "native": { "available": true, "error": null, "help": "" },
+  "rebuild": {
+    "running": false,
+    "startedAt": null,
+    "finishedAt": null,
+    "ok": null,
+    "output": ""
+  },
+  "ssh": {
+    "checked": true,
+    "reachable": true,
+    "host": "localhost",
+    "port": 22,
+    "banner": "SSH-2.0-OpenSSH_9.6p1 Debian-3",
+    "error": null,
+    "help": "",
+    "checkedAt": "2026-08-01T14:22:31.004Z"
+  }
 }
 ```
+
+### `GET /plugins/signalk-wetty/ssh-check`
+
+Re-runs the SSH availability check and returns the `ssh` block above, so you can
+confirm a freshly started sshd without restarting the plugin.
 
 ### `POST /plugins/signalk-wetty/rebuild-native`
 
@@ -193,15 +246,16 @@ npm run coverage
 
 ### Test layout
 
-| Suite                       | What it covers                                                                                                                     |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `test/config.test.js`       | Option resolution, coercion and the JSON Schema, including that schema defaults never drift from code defaults.                    |
-| `test/plugin.test.js`       | The plugin surface, start/stop/restart, error reporting and both HTTP routes, against a fake WeTTY.                                |
-| `test/wetty-runner.test.js` | WeTTY option mapping, shutdown behaviour and the Prometheus-registry reset that makes restarts work.                               |
-| `test/native.test.js`       | `node-pty` probing and the rebuild helper.                                                                                         |
-| `test/webapp.test.js`       | That the webapp stays self-contained and handles every status branch.                                                              |
-| `test/package.test.js`      | A local mirror of the app store packaging rules, so packaging mistakes fail in `npm test`.                                         |
-| `test/live-server.test.js`  | A real WeTTY instance: page, socket.io handshake, base path, iframe headers, port reuse and a port clash. Skipped without a build. |
+| Suite                       | What it covers                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `test/config.test.js`       | Option resolution, coercion and the JSON Schema, including that schema defaults never drift from code defaults.                      |
+| `test/plugin.test.js`       | The plugin surface, start/stop/restart, error reporting and both HTTP routes, against a fake WeTTY.                                  |
+| `test/wetty-runner.test.js` | WeTTY option mapping, shutdown behaviour and the Prometheus-registry reset that makes restarts work.                                 |
+| `test/native.test.js`       | `node-pty` probing and the rebuild helper.                                                                                           |
+| `test/ssh-probe.test.js`    | The SSH availability check against a fake server: a real banner, an impostor, a silent listener, a closed port, and the advice text. |
+| `test/webapp.test.js`       | That the webapp stays self-contained and handles every status branch.                                                                |
+| `test/package.test.js`      | A local mirror of the app store packaging rules, so packaging mistakes fail in `npm test`.                                           |
+| `test/live-server.test.js`  | A real WeTTY instance: page, socket.io handshake, base path, iframe headers, port reuse and a port clash. Skipped without a build.   |
 
 ### Integration environments
 
