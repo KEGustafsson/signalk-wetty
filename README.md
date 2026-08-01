@@ -27,12 +27,18 @@ admin UI.
 From the Signal K admin UI: **Appstore → Available**, search for
 `signalk-wetty`, install, then enable it under **Server → Plugin Config**.
 
-Or manually, next to your Signal K configuration:
+Or manually from GitHub Packages, next to your Signal K configuration:
 
 ```sh
 cd ~/.signalk
-npm install signalk-wetty
+printf "@kegustafsson:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n" > .npmrc
+npm install @kegustafsson/signalk-wetty
 ```
+
+The package is published at
+<https://github.com/KEGustafsson/signalk-wetty/pkgs/npm/signalk-wetty>.
+Set `GITHUB_TOKEN` to a GitHub token that can read packages for the
+`KEGustafsson` account before running the install command.
 
 Then restart the server and enable the plugin.
 
