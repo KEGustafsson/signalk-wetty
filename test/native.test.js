@@ -2,11 +2,22 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 
 const { load } = require('./helpers/harness')
 
-const { nativeHelpText, probeNodePty, rebuildNodePty } = load('native.js')
+const {
+  nativeHelpText,
+  bundledNodePtyPrebuildPath,
+  installBundledNodePtyPrebuild,
+  nodePtyPrebuildTargetPath,
+  nodePtyRebuildCommand,
+  probeNodePty,
+  rebuildNodePty,
+  verifyNodePtyCommand
+} = load('native.js')
 
 test('probeNodePty returns a structured result and never throws', () => {
   const probe = probeNodePty()
@@ -36,9 +47,69 @@ test('nativeHelpText explains the app store limitation and the fix', () => {
     error: 'missing'
   })
   assert.match(help, /--ignore-scripts/)
-  assert.match(help, /npm rebuild node-pty --build-from-source/)
+  assert.match(help, /npm rebuild node-pty --foreground-scripts/)
   assert.match(help, /\/srv\/signalk/)
   assert.match(help, /build-essential/)
+})
+
+test('the rebuild command avoids npm configs rejected by npm 11', () => {
+  const command = nodePtyRebuildCommand()
+  assert.deepEqual(command.args, [
+    'rebuild',
+    'node-pty',
+    '--foreground-scripts'
+  ])
+  assert.equal(command.args.includes('--build-from-source'), false)
+  assert.equal('env' in command, false)
+})
+
+test('linux node-pty prebuild paths match the package layout', () => {
+  assert.equal(bundledNodePtyPrebuildPath('darwin', 'arm64'), null)
+  assert.equal(nodePtyPrebuildTargetPath('/pkg/node-pty', 'linux', 'arm'), null)
+  assert.match(
+    bundledNodePtyPrebuildPath('linux', 'arm64'),
+    /native-prebuilds[\\/]linux-arm64[\\/]pty\.node$/
+  )
+  assert.equal(
+    nodePtyPrebuildTargetPath('/pkg/node-pty', 'linux', 'x64'),
+    path.join('/pkg/node-pty', 'prebuilds', 'linux-x64', 'pty.node')
+  )
+})
+
+test('a bundled prebuild is copied into node-ptys expected directory', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wetty-prebuild-'))
+  const prebuildRoot = path.join(temp, 'native-prebuilds')
+  const bundled = bundledNodePtyPrebuildPath('linux', 'arm64', prebuildRoot)
+  try {
+    fs.mkdirSync(path.dirname(bundled), { recursive: true })
+    fs.writeFileSync(bundled, 'native-binary-placeholder')
+
+    const packageDir = path.join(temp, 'node-pty')
+    const installed = installBundledNodePtyPrebuild(
+      packageDir,
+      'linux',
+      'arm64',
+      prebuildRoot
+    )
+    assert.equal(
+      installed,
+      path.join(packageDir, 'prebuilds', 'linux-arm64', 'pty.node')
+    )
+    assert.equal(
+      fs.readFileSync(installed, 'utf8'),
+      'native-binary-placeholder'
+    )
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('the rebuild result is verified by loading node-pty afterwards', () => {
+  const command = verifyNodePtyCommand('/srv/signalk', 1234)
+  assert.equal(command.command, process.execPath)
+  assert.deepEqual(command.args, ['-e', "require('node-pty')"])
+  assert.equal(command.cwd, '/srv/signalk')
+  assert.equal(command.timeoutMs, 1234)
 })
 
 test('rebuilding without a located install fails cleanly rather than spawning npm', async () => {

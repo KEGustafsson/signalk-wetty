@@ -163,6 +163,15 @@ WeTTY allocates PTYs through
 every Raspberry Pi, OpenPlotter and Venus OS install — it has to be compiled at
 install time.
 
+Published packages can include Linux x64 and arm64 `pty.node` prebuilds under
+`native-prebuilds/`. When one matches the host, the plugin copies it into
+`node-pty`'s expected `prebuilds/linux-*/pty.node` directory before loading
+WeTTY, so no plugin install script is needed.
+
+Run the **Native node-pty prebuilds** GitHub Actions workflow to build those
+files on native Linux x64 and arm64 runners and commit them back into the
+repository.
+
 The Signal K app store installs plugins with `npm install --ignore-scripts`,
 which skips that compile step. The plugin therefore:
 
@@ -170,14 +179,15 @@ which skips that compile step. The plugin therefore:
   fails outright,
 - probes `node-pty` on start and, if it cannot be loaded, refuses to start WeTTY
   and reports exactly what is wrong in the plugin status,
-- offers a **Rebuild node-pty** button in the webapp, which runs
-  `npm rebuild node-pty --build-from-source` in the Signal K install directory.
+- installs a bundled Linux x64/arm64 prebuild into `node-pty` when available,
+- offers a **Rebuild node-pty** button in the webapp as a fallback, which runs
+  `npm rebuild node-pty --foreground-scripts` in the Signal K install directory.
 
 The equivalent from a shell:
 
 ```sh
 sudo apt install -y python3 make g++      # Debian / Raspberry Pi OS
-cd ~/.signalk && npm rebuild node-pty --build-from-source
+cd ~/.signalk && npm rebuild node-pty --foreground-scripts
 ```
 
 Restart the plugin afterwards.

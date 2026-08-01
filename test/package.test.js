@@ -36,7 +36,7 @@ test('the built entry point exists and exports a factory', () => {
 })
 
 test('there are no install-time scripts, which the app store would skip', () => {
-  for (const script of ['preinstall', 'install', 'postinstall']) {
+  for (const script of ['preinstall', 'install', 'postinstall', 'prepare']) {
     assert.equal(
       pkg.scripts[script],
       undefined,
@@ -85,6 +85,7 @@ test('declared app store assets exist on disk', () => {
 
 test('published files cover the entry point and the webapp', () => {
   assert.ok(pkg.files.some((f) => f.replace(/\/$/, '') === 'dist'))
+  assert.ok(pkg.files.some((f) => f.replace(/\/$/, '') === 'native-prebuilds'))
   assert.ok(pkg.files.some((f) => f.replace(/\/$/, '') === 'public'))
 })
 

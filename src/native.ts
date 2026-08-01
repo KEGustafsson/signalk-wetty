@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -24,10 +25,62 @@ export interface RebuildResult {
   output: string
 }
 
+export interface RebuildCommand {
+  command: string
+  args: string[]
+}
+
+interface SpawnCommand {
+  command: string
+  args: string[]
+  cwd: string
+  timeoutMs: number
+}
+
 const MODULE_NOT_FOUND = new Set(['MODULE_NOT_FOUND', 'ERR_MODULE_NOT_FOUND'])
+const SUPPORTED_PREBUILD_ARCHES = new Set(['arm64', 'x64'])
 
 const errorMessage = (err: unknown): string =>
   err instanceof Error ? err.message : String(err)
+
+export const bundledNodePtyPrebuildPath = (
+  platform = process.platform,
+  arch = process.arch,
+  prebuildRoot = path.resolve(__dirname, '..', 'native-prebuilds')
+): string | null => {
+  if (platform !== 'linux' || !SUPPORTED_PREBUILD_ARCHES.has(arch)) {
+    return null
+  }
+  return path.join(prebuildRoot, `linux-${arch}`, 'pty.node')
+}
+
+export const nodePtyPrebuildTargetPath = (
+  packageDir: string,
+  platform = process.platform,
+  arch = process.arch
+): string | null => {
+  if (platform !== 'linux' || !SUPPORTED_PREBUILD_ARCHES.has(arch)) {
+    return null
+  }
+  return path.join(packageDir, 'prebuilds', `linux-${arch}`, 'pty.node')
+}
+
+export const installBundledNodePtyPrebuild = (
+  packageDir: string,
+  platform = process.platform,
+  arch = process.arch,
+  prebuildRoot = path.resolve(__dirname, '..', 'native-prebuilds')
+): string | null => {
+  const source = bundledNodePtyPrebuildPath(platform, arch, prebuildRoot)
+  const target = nodePtyPrebuildTargetPath(packageDir, platform, arch)
+  if (!source || !target || !fs.existsSync(source)) {
+    return null
+  }
+
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  fs.copyFileSync(source, target)
+  return target
+}
 
 /**
  * Candidate resolution roots for anything inside WeTTY's dependency tree, in
@@ -67,6 +120,13 @@ export const probeNodePty = (): NativeProbeResult => {
   const packageDir = path.resolve(path.dirname(resolved), '..')
   const nodeModulesDir = path.dirname(packageDir)
   const projectDir = path.dirname(nodeModulesDir)
+  let prebuildInstallError: string | undefined
+
+  try {
+    installBundledNodePtyPrebuild(packageDir)
+  } catch (err) {
+    prebuildInstallError = errorMessage(err)
+  }
 
   try {
     require(resolved)
@@ -83,7 +143,14 @@ export const probeNodePty = (): NativeProbeResult => {
       available: false,
       packageDir,
       projectDir,
-      error: `node-pty is installed but ${hint}: ${errorMessage(err)}`
+      error: [
+        `node-pty is installed but ${hint}: ${errorMessage(err)}`,
+        prebuildInstallError
+          ? `Bundled native prebuild could not be installed: ${prebuildInstallError}`
+          : ''
+      ]
+        .filter(Boolean)
+        .join(' ')
     }
   }
 }
@@ -96,40 +163,39 @@ export const nativeHelpText = (probe: NativeProbeResult): string => {
   return [
     'The terminal needs the node-pty native module, which the Signal K app store',
     'cannot compile because it installs plugins with --ignore-scripts.',
-    `Run "npm rebuild node-pty --build-from-source"${where}, or use the Rebuild`,
+    `Run "npm rebuild node-pty --foreground-scripts"${where}, or use the Rebuild`,
     'button on the WeTTY Terminal webapp, then restart the plugin.',
     'Building requires python3, make and a C++ compiler (build-essential).'
   ].join(' ')
 }
 
-/**
- * Runs `npm rebuild node-pty` for the install that {@link probeNodePty}
- * located. Resolves rather than rejects on a failed build so the caller can
- * surface the compiler output to the user.
- */
-export const rebuildNodePty = (
-  probe: NativeProbeResult,
-  timeoutMs = 10 * 60 * 1000
-): Promise<RebuildResult> =>
-  new Promise((resolve) => {
-    if (!probe.projectDir) {
-      resolve({
-        ok: false,
-        output: 'node-pty is not installed, so there is nothing to rebuild.'
-      })
-      return
-    }
+export const nodePtyRebuildCommand = (): RebuildCommand => ({
+  command: process.platform === 'win32' ? 'npm.cmd' : 'npm',
+  args: ['rebuild', 'node-pty', '--foreground-scripts']
+})
 
-    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-    const child = spawn(
-      npm,
-      ['rebuild', 'node-pty', '--build-from-source', '--foreground-scripts'],
-      {
-        cwd: probe.projectDir,
-        env: process.env,
-        shell: process.platform === 'win32'
-      }
-    )
+export const verifyNodePtyCommand = (
+  projectDir: string,
+  timeoutMs = 30 * 1000
+): SpawnCommand => ({
+  command: process.execPath,
+  args: ['-e', "require('node-pty')"],
+  cwd: projectDir,
+  timeoutMs
+})
+
+const runCommand = ({
+  command,
+  args,
+  cwd,
+  timeoutMs
+}: SpawnCommand): Promise<RebuildResult> =>
+  new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd,
+      env: process.env,
+      shell: process.platform === 'win32'
+    })
 
     let output = ''
     const collect = (chunk: Buffer) => {
@@ -141,10 +207,7 @@ export const rebuildNodePty = (
     child.stderr?.on('data', collect)
 
     // The timeout has to settle the promise itself rather than rely on a
-    // subsequent 'close': killing the process is not guaranteed to produce
-    // one. On Windows the child is a shell wrapper, so SIGKILL reaches cmd.exe
-    // and npm can outlive it — and a promise that never settles leaves the
-    // HTTP request that triggered the rebuild hanging forever.
+    // subsequent 'close': killing the process is not guaranteed to produce one.
     let settled = false
     const settle = (result: RebuildResult) => {
       if (settled) {
@@ -168,7 +231,7 @@ export const rebuildNodePty = (
     child.on('error', (err) => {
       settle({
         ok: false,
-        output: `${output}\nFailed to run npm: ${err.message}`.trim()
+        output: `${output}\nFailed to run ${command}: ${err.message}`.trim()
       })
     })
 
@@ -176,3 +239,43 @@ export const rebuildNodePty = (
       settle({ ok: code === 0, output: output.trim() })
     })
   })
+
+/**
+ * Runs `npm rebuild node-pty` for the install that {@link probeNodePty}
+ * located. Resolves rather than rejects on a failed build so the caller can
+ * surface the compiler output to the user.
+ */
+export const rebuildNodePty = async (
+  probe: NativeProbeResult,
+  timeoutMs = 10 * 60 * 1000
+): Promise<RebuildResult> => {
+  if (!probe.projectDir) {
+    return {
+      ok: false,
+      output: 'node-pty is not installed, so there is nothing to rebuild.'
+    }
+  }
+
+  const rebuild = nodePtyRebuildCommand()
+  const rebuildResult = await runCommand({
+    command: rebuild.command,
+    args: rebuild.args,
+    cwd: probe.projectDir,
+    timeoutMs
+  })
+
+  if (!rebuildResult.ok) {
+    return rebuildResult
+  }
+
+  const verify = await runCommand(verifyNodePtyCommand(probe.projectDir))
+  if (verify.ok) {
+    return rebuildResult
+  }
+
+  return {
+    ok: false,
+    output:
+      `${rebuildResult.output}\nnode-pty still cannot be loaded after rebuild:\n${verify.output}`.trim()
+  }
+}
