@@ -55,7 +55,8 @@ const createMockRouter = () => {
   const handlers = new Map()
   const router = {
     get: (routePath, handler) => handlers.set(`GET ${routePath}`, handler),
-    post: (routePath, handler) => handlers.set(`POST ${routePath}`, handler)
+    post: (routePath, handler) => handlers.set(`POST ${routePath}`, handler),
+    use: (routePath, handler) => handlers.set(`USE ${routePath}`, handler)
   }
   const call = (key, req = {}) =>
     new Promise((resolve, reject) => {

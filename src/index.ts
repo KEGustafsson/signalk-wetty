@@ -1,4 +1,6 @@
 import {
+  EMBEDDED_TERMINAL_PATH,
+  EMBEDDED_TERMINAL_SUBPATH,
   PLUGIN_ID,
   PLUGIN_NAME,
   PLUGIN_SCHEMA,
@@ -9,12 +11,19 @@ import {
   resolveSsl,
   type ResolvedOptions
 } from './config'
+import type { EmbeddedProxy } from './embedded-proxy'
+import { createEmbeddedProxy, installUpgradeForwarding } from './embedded-proxy'
 import {
   nativeHelpText,
   probeNodePty,
   rebuildNodePty,
   type NativeProbeResult
 } from './native'
+import {
+  probeSshClient as probeSshClientDefault,
+  sshClientHelpText,
+  type SshClientProbe
+} from './ssh-client-probe'
 import { probeSshServer, sshHelpText } from './ssh-probe'
 import { WettyRunner } from './wetty-runner'
 import type { PluginDeps } from './deps'
@@ -51,6 +60,9 @@ const skippedSshCheck = (options: ResolvedOptions): SshCheck => ({
   checkedAt: null
 })
 
+/** Local mode never shells out to ssh either, so there is nothing to probe. */
+const NEUTRAL_SSH_CLIENT: SshClientProbe = { available: true, error: null }
+
 const buildStatus = (
   options: ResolvedOptions,
   running: boolean,
@@ -58,6 +70,7 @@ const buildStatus = (
   error: string | null,
   native: NativeProbeResult,
   rebuild: RebuildState,
+  sshClient: SshClientProbe,
   ssh: SshCheck
 ): PluginStatus => ({
   running,
@@ -65,8 +78,7 @@ const buildStatus = (
   error,
   scheme: resolveSsl(options) ? 'https' : 'http',
   port: options.port,
-  basePath: options.basePath,
-  loopbackOnly: options.host === '127.0.0.1' || options.host === '::1',
+  basePath: EMBEDDED_TERMINAL_PATH,
   allowIframe: options.allowIframe,
   requestedMode: options.mode,
   effectiveMode: effectiveMode(options),
@@ -77,6 +89,11 @@ const buildStatus = (
     help: nativeHelpText(native)
   },
   rebuild,
+  sshClient: {
+    available: sshClient.available,
+    error: sshClient.error,
+    help: sshClientHelpText(sshClient)
+  },
   ssh
 })
 
@@ -88,6 +105,7 @@ function signalkWetty(
   const probeNative = deps.probeNative ?? probeNodePty
   const rebuildNative = deps.rebuildNative ?? rebuildNodePty
   const probeSsh = deps.probeSsh ?? probeSshServer
+  const probeSshClientFn = deps.probeSshClient ?? probeSshClientDefault
   const debug = (msg: string) => {
     try {
       app.debug(msg)
@@ -98,11 +116,15 @@ function signalkWetty(
 
   const runner = new WettyRunner(deps.loadWetty, debug)
 
+  let embeddedProxy: EmbeddedProxy | undefined
+  let removeUpgradeForwarding: (() => void) | undefined
+
   let options: ResolvedOptions = resolveOptions({})
   let native: NativeProbeResult = { available: false, error: 'not probed yet' }
   let message = 'Not started'
   let error: string | null = null
   let rebuild: RebuildState = idleRebuild()
+  let sshClient: SshClientProbe = NEUTRAL_SSH_CLIENT
   let ssh: SshCheck = skippedSshCheck(options)
 
   const setStatus = (msg: string) => {
@@ -126,10 +148,6 @@ function signalkWetty(
   }
 
   const describeRunning = (): string => {
-    const scheme = resolveSsl(options) ? 'https' : 'http'
-    const where = `${scheme}://<server>:${options.port}${
-      options.basePath === '/' ? '/' : options.basePath
-    }`
     const how =
       effectiveMode(options) === 'local'
         ? 'local login shell'
@@ -138,7 +156,7 @@ function signalkWetty(
       options.mode === 'local' && effectiveMode(options) === 'ssh'
         ? ' (local mode needs the server to run as root, falling back to SSH)'
         : ''
-    return `Terminal on ${where} — ${how}${downgraded}`
+    return `Terminal embedded at ${EMBEDDED_TERMINAL_PATH}/ — ${how}${downgraded}`
   }
 
   const redactedOptions = (): string =>
@@ -146,6 +164,26 @@ function signalkWetty(
       ...options,
       ssh: { ...options.ssh, password: options.ssh.password ? '***' : '' }
     })
+
+  /**
+   * A missing ssh client and an unreachable SSH server both mean every
+   * session will fail, and both are reported the same way, so start() and
+   * GET /ssh-check share this rather than duplicating the combine-and-report
+   * logic.
+   */
+  const applySshStatus = (): void => {
+    const problems = [
+      !sshClient.available ? sshClient.error : null,
+      ssh.checked && !ssh.reachable ? ssh.error : null
+    ].filter((problem): problem is string => Boolean(problem))
+    if (problems.length > 0) {
+      setError(
+        `${describeRunning()} — but ${problems.join('; ')}. Open the WeTTY Terminal webapp for how to fix this.`
+      )
+    } else {
+      setStatus(describeRunning())
+    }
+  }
 
   /**
    * Checks that something is actually answering as an SSH server, so a missing
@@ -183,6 +221,8 @@ function signalkWetty(
   const start = async (rawOptions: unknown): Promise<void> => {
     options = resolveOptions(rawOptions)
     native = probeNative()
+    sshClient =
+      effectiveMode(options) === 'ssh' ? probeSshClientFn() : NEUTRAL_SSH_CLIENT
     ssh = skippedSshCheck(options)
 
     if (!native.available) {
@@ -196,17 +236,32 @@ function signalkWetty(
       await runner.start(options)
       debug(`WeTTY started with ${redactedOptions()}`)
 
-      // Checked after the terminal is up: a missing SSH server is worth
-      // reporting loudly, but it is not a reason to withhold the page. The
-      // moment sshd is started, sessions work without touching the plugin.
-      ssh = await checkSsh()
-      if (ssh.checked && !ssh.reachable) {
-        setError(
-          `${describeRunning()} — but ${ssh.error}. Open the WeTTY Terminal webapp for how to fix this.`
+      // Genuinely embeds the terminal — reverse-proxied through Signal K's
+      // own origin and port, WebSocket upgrades included — rather than just
+      // framing a separate server on its own port. See src/embedded-proxy.ts.
+      removeUpgradeForwarding?.()
+      embeddedProxy = createEmbeddedProxy(
+        { port: options.port },
+        EMBEDDED_TERMINAL_PATH,
+        (msg) => debug(msg)
+      )
+      removeUpgradeForwarding = installUpgradeForwarding(
+        app.server,
+        embeddedProxy.handleUpgrade
+      )
+      if (!app.server) {
+        debug(
+          'Signal K did not expose app.server — the terminal page will load, but WebSocket sessions will not connect.'
         )
-      } else {
-        setStatus(describeRunning())
       }
+
+      // Checked after the terminal is up: neither a missing ssh client nor a
+      // missing SSH server is a reason to withhold the page — sessions fail,
+      // but the page itself is fine, and fixing either takes effect without
+      // touching the plugin (a restart re-probes the client; "Check again"
+      // in the webapp re-probes the server).
+      ssh = await checkSsh()
+      applySshStatus()
     } catch (err) {
       const detail = describeError(err)
       const hint =
@@ -222,6 +277,9 @@ function signalkWetty(
   }
 
   const stop = async (): Promise<void> => {
+    removeUpgradeForwarding?.()
+    removeUpgradeForwarding = undefined
+    embeddedProxy = undefined
     try {
       await runner.stop()
     } catch (err) {
@@ -231,6 +289,21 @@ function signalkWetty(
   }
 
   const registerWithRouter = (router: PluginRouterLike): void => {
+    // The actual embedding: everything under this path is reverse-proxied
+    // to WeTTY, which keeps listening on its own loopback-only port exactly
+    // as before. Mounted here (rather than served directly) so the browser
+    // only ever talks to Signal K's own origin — same-origin, same admin
+    // session, no separate port to expose.
+    router.use(EMBEDDED_TERMINAL_SUBPATH, async (req, res, next) => {
+      if (!embeddedProxy) {
+        res.statusCode = 503
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify({ error: 'Terminal is not running' }))
+        return
+      }
+      await embeddedProxy.middleware(req, res, next)
+    })
+
     router.get('/status', (_req, res: RouteResponse) => {
       res.json(
         buildStatus(
@@ -240,6 +313,7 @@ function signalkWetty(
           error,
           native,
           rebuild,
+          sshClient,
           ssh
         )
       )
@@ -252,13 +326,7 @@ function signalkWetty(
         .then((result) => {
           ssh = result
           if (runner.running) {
-            if (ssh.checked && !ssh.reachable) {
-              setError(
-                `${describeRunning()} — but ${ssh.error}. Open the WeTTY Terminal webapp for how to fix this.`
-              )
-            } else {
-              setStatus(describeRunning())
-            }
+            applySshStatus()
           }
           res.json(ssh)
         })

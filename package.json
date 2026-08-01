@@ -20,6 +20,7 @@
   "keywords": [
     "signalk-node-server-plugin",
     "signalk-webapp",
+    "signalk-embeddable-webapp",
     "signalk-category-utility",
     "wetty",
     "terminal",
@@ -28,7 +29,7 @@
   ],
   "signalk-plugin-enabled-by-default": false,
   "signalk": {
-    "appIcon": "./public/app-icon.svg",
+    "appIcon": "./app-icon.svg",
     "displayName": "WeTTY Terminal",
     "screenshots": [
       "./public/screenshot-terminal.svg",
@@ -43,9 +44,10 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run build:webapp",
+    "build:webapp": "webpack --config webpack.config.js",
     "build:node-pty-prebuild": "node scripts/build-node-pty-prebuild.mjs",
-    "clean": "rimraf dist",
+    "clean": "rimraf dist public/*.js public/*.js.map public/*.LICENSE.txt",
     "prepack": "npm run build",
     "watch": "tsc -p tsconfig.json --watch",
     "lint": "eslint .",
@@ -55,9 +57,7 @@
     "test": "npm run build && node --test",
     "test:only": "node --test",
     "coverage": "npm run build && node --test --experimental-test-coverage",
-    "integration": "node integration/signalk-smoke.mjs",
-    "docker:up": "docker compose -f docker/docker-compose.yml up --build",
-    "docker:down": "docker compose -f docker/docker-compose.yml down -v"
+    "integration": "node integration/signalk-smoke.mjs"
   },
   "optionalDependencies": {
     "wetty": "^3.2.0",
@@ -66,12 +66,20 @@
   "devDependencies": {
     "@eslint/js": "^9.19.0",
     "@types/node": "^22.13.0",
+    "@types/react": "^19.2.18",
     "eslint": "^9.19.0",
     "globals": "^17.8.0",
     "prettier": "^3.4.2",
+    "react": "^19.2.8",
     "rimraf": "^6.0.1",
+    "ts-loader": "^9.6.2",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.23.0",
+    "webpack": "^5.109.2",
+    "webpack-cli": "^6.0.1",
     "winston": "^3.19.0"
+  },
+  "dependencies": {
+    "http-proxy-middleware": "^3.0.7"
   }
 }

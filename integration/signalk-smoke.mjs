@@ -132,6 +132,9 @@ try {
 
   log('Enabling the plugin')
   const pluginId = pkg.name.replace(/@/g, '_').replace(/\//g, '_')
+  // WeTTY's own basePath is always this path (see wetty-runner.ts), whether
+  // reached directly on its own port or through the Signal K-embedded proxy.
+  const embeddedTerminalPath = `/plugins/${pluginId}/terminal`
   await mkdir(path.join(workdir, 'plugin-config-data'), { recursive: true })
   await writeFile(
     path.join(workdir, 'plugin-config-data', `${pluginId}.json`),
@@ -211,22 +214,43 @@ try {
 
   if (status.running) {
     const page = await waitFor('the terminal page', async () => {
-      const res = await fetch(`http://127.0.0.1:${WETTY_PORT}/`)
+      const res = await fetch(
+        `http://127.0.0.1:${WETTY_PORT}${embeddedTerminalPath}/`
+      )
       return res.ok ? res.text() : null
     })
     check('the terminal serves its page', page.includes('id="terminal"'))
 
     const handshake = await fetch(
-      `http://127.0.0.1:${WETTY_PORT}/socket.io/?EIO=4&transport=polling`
+      `http://127.0.0.1:${WETTY_PORT}${embeddedTerminalPath}/socket.io/?EIO=4&transport=polling`
     )
     check(
       'the terminal answers a socket.io handshake',
       handshake.ok && (await handshake.text()).includes('"sid"')
     )
+
+    // The actual embedding: reachable through Signal K's own port, not
+    // WeTTY's, with no path-rewriting bugs (see the root-path redirect loop
+    // this same check would have caught).
+    const embeddedPage = await fetch(`${base}${embeddedTerminalPath}/`)
+    check(
+      'the terminal is reachable through the Signal K-embedded proxy',
+      embeddedPage.ok && (await embeddedPage.text()).includes('id="terminal"')
+    )
   }
 
   const webappPage = await fetch(`${base}/${pkg.name}/`)
   check('the webapp is served by the Signal K server', webappPage.ok)
+
+  const remoteEntry = await fetch(`${base}/${pkg.name}/remoteEntry.js`)
+  const remoteEntryBody = remoteEntry.ok ? await remoteEntry.text() : ''
+  const federationName = pkg.name.replace(/[-@/]/g, '_')
+  check(
+    'the Module Federation bundle is served and exposes AppPanel',
+    remoteEntry.ok &&
+      remoteEntryBody.includes(`var ${federationName}`) &&
+      remoteEntryBody.includes('./AppPanel')
+  )
 } finally {
   if (server && server.exitCode === null) {
     log('Stopping signalk-server')

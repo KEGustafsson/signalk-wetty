@@ -3,6 +3,15 @@ import type { JsonSchema } from './types'
 export const PLUGIN_ID = 'signalk-wetty'
 export const PLUGIN_NAME = 'WeTTY Terminal'
 
+/**
+ * Where the terminal is genuinely embedded: reverse-proxied through Signal
+ * K's own origin and port, under the router path Signal K mounts plugin
+ * routes at. This is what makes it a Signal K *embedded* webapp rather than
+ * a separate server framed from a different port. See src/embedded-proxy.ts.
+ */
+export const EMBEDDED_TERMINAL_SUBPATH = '/terminal'
+export const EMBEDDED_TERMINAL_PATH = `/plugins/${PLUGIN_ID}${EMBEDDED_TERMINAL_SUBPATH}`
+
 export type ConnectionMode = 'ssh' | 'local'
 
 export type LogLevel =
@@ -40,7 +49,6 @@ export interface WettySslOptions {
 export interface ResolvedOptions {
   port: number
   host: string
-  basePath: string
   title: string
   allowIframe: boolean
   logLevel: LogLevel
@@ -59,8 +67,11 @@ export const DEFAULT_PORT = 3001
 
 export const DEFAULTS: ResolvedOptions = {
   port: DEFAULT_PORT,
-  host: '0.0.0.0',
-  basePath: '/',
+  // Loopback-only by default: the terminal is reachable through the
+  // embedded webapp (proxied through the Signal K server itself)
+  // regardless of this setting. Widen it only to also expose the port
+  // directly on the network, bypassing Signal K's own access control.
+  host: '127.0.0.1',
   title: 'Signal K Terminal',
   allowIframe: true,
   logLevel: 'info',
@@ -108,21 +119,6 @@ const asPort = (value: unknown, fallback: number): number => {
 const asBoolean = (value: unknown, fallback: boolean): boolean =>
   typeof value === 'boolean' ? value : fallback
 
-/**
- * WeTTY trims trailing slashes off the base itself, so `/wetty/` and `/wetty`
- * are equivalent. Everything is normalised to a leading slash and no trailing
- * slash, with the site root represented as a bare `/`.
- */
-export const normalizeBasePath = (value: unknown): string => {
-  const raw = typeof value === 'string' ? value.trim() : ''
-  if (raw === '' || raw === '/') {
-    return '/'
-  }
-  const withLeading = raw.startsWith('/') ? raw : `/${raw}`
-  const trimmed = withLeading.replace(/\/+$/, '')
-  return trimmed === '' ? '/' : trimmed
-}
-
 const asLogLevel = (value: unknown, fallback: LogLevel): LogLevel =>
   typeof value === 'string' && (LOG_LEVELS as string[]).includes(value)
     ? (value as LogLevel)
@@ -144,7 +140,6 @@ export const resolveOptions = (raw: unknown): ResolvedOptions => {
   return {
     port: asPort(options.port, DEFAULTS.port),
     host: asString(options.host, DEFAULTS.host),
-    basePath: normalizeBasePath(options.basePath ?? DEFAULTS.basePath),
     title: asString(options.title, DEFAULTS.title),
     allowIframe: asBoolean(options.allowIframe, DEFAULTS.allowIframe),
     logLevel: asLogLevel(options.logLevel, DEFAULTS.logLevel),
@@ -222,15 +217,8 @@ export const PLUGIN_SCHEMA: JsonSchema = {
       type: 'string',
       title: 'Bind address',
       description:
-        'Address to bind to. Use 127.0.0.1 to expose the terminal only to a reverse proxy on the same machine.',
+        'Address WeTTY itself binds to. The terminal is always reachable through the embedded webapp in the Signal K admin UI regardless of this setting. Set to 0.0.0.0 only to also expose the port directly on the network.',
       default: DEFAULTS.host
-    },
-    basePath: {
-      type: 'string',
-      title: 'URL base path',
-      description:
-        'Base path the terminal is served from. Leave as / unless you put a reverse proxy in front of it.',
-      default: DEFAULTS.basePath
     },
     title: {
       type: 'string',
@@ -364,7 +352,6 @@ export const PLUGIN_UI_SCHEMA: Record<string, unknown> = {
     'command',
     'port',
     'host',
-    'basePath',
     'title',
     'allowIframe',
     'logLevel',

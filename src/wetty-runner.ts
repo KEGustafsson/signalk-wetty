@@ -1,5 +1,8 @@
 import type { LogLevel, ResolvedOptions } from './config'
-import { effectiveMode, resolveSsl } from './config'
+import { EMBEDDED_TERMINAL_PATH, effectiveMode, resolveSsl } from './config'
+import type { PatchableHttpServer } from './csp-patch'
+import { installCspPatch } from './csp-patch'
+import { installEnvVersionPatch } from './env-version-patch'
 import { resolutionPaths } from './native'
 
 /**
@@ -36,7 +39,7 @@ interface WettyServerConfig {
 }
 
 /** The Node HTTP server underneath WeTTY's socket.io server. */
-export interface HttpServerLike {
+export interface HttpServerLike extends PatchableHttpServer {
   listening?: boolean
   close: (cb?: (err?: Error) => void) => void
   closeAllConnections?: () => void
@@ -83,7 +86,11 @@ export const toWettyConfig = (
     allowRemoteCommand: options.ssh.allowRemoteCommand
   },
   server: {
-    base: options.basePath,
+    // Always the embedded proxy's own mount path, never user-configurable:
+    // WeTTY's self-generated asset/socket.io links are only correct when
+    // this matches exactly where the browser actually reaches it through
+    // the proxy. See src/embedded-proxy.ts.
+    base: EMBEDDED_TERMINAL_PATH,
     port: options.port,
     host: options.host,
     title: options.title,
@@ -174,6 +181,7 @@ const awaitListening = (
 export class WettyRunner {
   private handle: WettyHandle | undefined
   private startCount = 0
+  private removeEnvVersionPatch: (() => void) | undefined
 
   constructor(
     private readonly loader: WettyLoader = defaultLoader,
@@ -189,6 +197,11 @@ export class WettyRunner {
       await this.stop()
     }
 
+    // Installed before WeTTY is even loaded, so there is no window in which
+    // a session could reach the real, crash-prone `env --version` call. See
+    // src/env-version-patch.ts.
+    this.removeEnvVersionPatch = installEnvVersionPatch()
+
     const mod = await this.loader()
     const { ssh, server, forcessh } = toWettyConfig(options)
     const ssl = resolveSsl(options)
@@ -201,16 +214,38 @@ export class WettyRunner {
 
     let handle: WettyHandle
     try {
-      handle = await mod.start(ssh, server, options.command, forcessh, ssl)
-    } catch (err) {
-      if (!isDuplicateMetricError(err)) {
-        throw err
+      try {
+        handle = await mod.start(ssh, server, options.command, forcessh, ssl)
+      } catch (err) {
+        if (!isDuplicateMetricError(err)) {
+          throw err
+        }
+        this.log('Clearing the Prometheus registry and retrying WeTTY start')
+        clearPrometheusRegistry()
+        handle = await mod.start(ssh, server, options.command, forcessh, ssl)
       }
-      this.log('Clearing the Prometheus registry and retrying WeTTY start')
-      clearPrometheusRegistry()
-      handle = await mod.start(ssh, server, options.command, forcessh, ssl)
+    } catch (err) {
+      // Nothing ever started, so stop() will not run to clean this up.
+      this.removeEnvVersionPatch?.()
+      this.removeEnvVersionPatch = undefined
+      throw err
     }
     this.startCount += 1
+
+    // WeTTY's own allowIframe only clears X-Frame-Options, and helmet's
+    // upgrade-insecure-requests is sent even when WeTTY has no certificate to
+    // actually serve HTTPS with — both need patching out of the CSP header
+    // before any request is served. See src/csp-patch.ts.
+    const cspDirectivesToStrip: string[] = []
+    if (options.allowIframe) {
+      cspDirectivesToStrip.push('frame-ancestors')
+    }
+    if (!ssl) {
+      cspDirectivesToStrip.push('upgrade-insecure-requests')
+    }
+    if (handle.httpServer) {
+      installCspPatch(handle.httpServer, cspDirectivesToStrip)
+    }
 
     try {
       await awaitListening(handle, listenTimeoutMs)
@@ -239,6 +274,8 @@ export class WettyRunner {
   async stop(timeoutMs = 5000): Promise<void> {
     const handle = this.handle
     this.handle = undefined
+    this.removeEnvVersionPatch?.()
+    this.removeEnvVersionPatch = undefined
     if (!handle) {
       return
     }

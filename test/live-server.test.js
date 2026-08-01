@@ -2,6 +2,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const http = require('node:http')
 
 const {
   load,
@@ -23,6 +24,12 @@ const skip = !nativeAvailable()
   : false
 
 const createPlugin = load('index.js')
+const { EMBEDDED_TERMINAL_PATH } = load('config.js')
+
+// WeTTY's basePath is always EMBEDDED_TERMINAL_PATH (see wetty-runner.ts),
+// so even a direct fetch against its own port has to use that path.
+const directUrl = (port, suffix = '') =>
+  `http://127.0.0.1:${port}${EMBEDDED_TERMINAL_PATH}${suffix}`
 
 // These tests are about WeTTY serving real traffic, not about SSH. Stubbing the
 // probe keeps them from depending on whether the machine running them happens
@@ -51,7 +58,7 @@ test('the plugin serves a real WeTTY instance', { skip }, async (t) => {
   await plugin.start({ port, host: '127.0.0.1', title: 'Live test terminal' })
   assert.equal(app.calls.pluginError.length, 0, app.lastError())
 
-  const page = await fetch(`http://127.0.0.1:${port}/`)
+  const page = await fetch(directUrl(port, '/'))
   assert.equal(page.status, 200)
   const body = await page.text()
   assert.match(body, /<title>Live test terminal<\/title>/)
@@ -59,9 +66,17 @@ test('the plugin serves a real WeTTY instance', { skip }, async (t) => {
 
   // allowIframe defaults to true so the admin UI can embed the terminal.
   assert.equal(page.headers.get('x-frame-options'), null)
+  const csp = page.headers.get('content-security-policy') || ''
+  // WeTTY's own allowIframe only clears X-Frame-Options; helmet's default
+  // CSP frame-ancestors 'self' would still block embedding from the admin
+  // UI, which normally runs on a different port. See src/csp-patch.ts.
+  assert.doesNotMatch(csp, /frame-ancestors/)
+  // No SSL is configured for this test server, so upgrading a later request
+  // to HTTPS (helmet's other CSP default) would just fail outright.
+  assert.doesNotMatch(csp, /upgrade-insecure-requests/)
 
   const handshake = await fetch(
-    `http://127.0.0.1:${port}/socket.io/?EIO=4&transport=polling`
+    directUrl(port, '/socket.io/?EIO=4&transport=polling')
   )
   assert.equal(handshake.status, 200)
   assert.match(await handshake.text(), /"sid"/)
@@ -70,6 +85,71 @@ test('the plugin serves a real WeTTY instance', { skip }, async (t) => {
   assert.equal(status.body.running, true)
   assert.equal(status.body.port, port)
 })
+
+test(
+  'the terminal is genuinely embedded: reachable through a single origin, no separate port to visit',
+  { skip },
+  async (t) => {
+    const app = createMockApp()
+    // Stands in for Signal K's own HTTP server, exposed as app.server so the
+    // plugin can forward WebSocket upgrades the same way regular HTTP
+    // requests are forwarded through the router.
+    const frontend = http.createServer()
+    const frontendPort = await freePort()
+    await new Promise((resolve) =>
+      frontend.listen(frontendPort, '127.0.0.1', resolve)
+    )
+    t.after(() => new Promise((resolve) => frontend.close(resolve)))
+
+    const plugin = createPlugin(
+      { ...app, server: frontend },
+      {
+        probeSsh: async (host, port) => ({
+          reachable: true,
+          host,
+          port,
+          banner: 'SSH-2.0-OpenSSH_9.6p1',
+          error: null,
+          code: null
+        })
+      }
+    )
+    const { router, handlers } = createMockRouter()
+    plugin.registerWithRouter(router)
+
+    // Simulates what Express does once Signal K mounts the plugin's router
+    // at /plugins/signalk-wetty and the plugin mounts itself at /terminal
+    // underneath: strip both prefixes before the registered handler runs.
+    const MOUNT_PREFIX = '/plugins/signalk-wetty/terminal'
+    frontend.on('request', (req, res) => {
+      if (!req.url.startsWith(MOUNT_PREFIX)) {
+        res.writeHead(404)
+        res.end()
+        return
+      }
+      req.url = req.url.slice(MOUNT_PREFIX.length) || '/'
+      const handler = handlers.get('USE /terminal')
+      void handler(req, res, () => {})
+    })
+
+    const wettyPort = await freePort()
+    t.after(() => plugin.stop())
+    await plugin.start({ port: wettyPort, host: '127.0.0.1' })
+    assert.equal(app.calls.pluginError.length, 0, app.lastError())
+
+    // Every request in this test targets frontendPort — standing in for
+    // Signal K's own port — never WeTTY's own internal port directly.
+    const page = await fetch(`http://127.0.0.1:${frontendPort}${MOUNT_PREFIX}/`)
+    assert.equal(page.status, 200)
+    assert.match(await page.text(), /id="terminal"/)
+
+    const handshake = await fetch(
+      `http://127.0.0.1:${frontendPort}${MOUNT_PREFIX}/socket.io/?EIO=4&transport=polling`
+    )
+    assert.equal(handshake.status, 200)
+    assert.match(await handshake.text(), /"sid"/)
+  }
+)
 
 test(
   'the port is released on stop and reusable on restart',
@@ -82,28 +162,13 @@ test(
 
     await plugin.start({ port, host: '127.0.0.1' })
     await plugin.stop()
-    await assert.rejects(() => fetch(`http://127.0.0.1:${port}/`))
+    await assert.rejects(() => fetch(directUrl(port, '/')))
 
     // Restarting on the same port only works if stop() really closed the
     // listener, and only if WeTTY's Prometheus metrics were reset.
     await plugin.start({ port, host: '127.0.0.1' })
     assert.equal(app.calls.pluginError.length, 0, app.lastError())
-    assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200)
-  }
-)
-
-test(
-  'a base path moves the terminal off the site root',
-  { skip },
-  async (t) => {
-    const app = createMockApp()
-    const plugin = withStubbedSsh(app)
-    const port = await freePort()
-    t.after(() => plugin.stop())
-
-    await plugin.start({ port, host: '127.0.0.1', basePath: '/terminal/' })
-    assert.equal(app.calls.pluginError.length, 0, app.lastError())
-    assert.equal((await fetch(`http://127.0.0.1:${port}/terminal`)).status, 200)
+    assert.equal((await fetch(directUrl(port, '/'))).status, 200)
   }
 )
 
@@ -114,8 +179,12 @@ test('iframe embedding can be locked down', { skip }, async (t) => {
   t.after(() => plugin.stop())
 
   await plugin.start({ port, host: '127.0.0.1', allowIframe: false })
-  const page = await fetch(`http://127.0.0.1:${port}/`)
+  const page = await fetch(directUrl(port, '/'))
   assert.equal(page.headers.get('x-frame-options'), 'SAMEORIGIN')
+  const csp = page.headers.get('content-security-policy') || ''
+  assert.match(csp, /frame-ancestors 'self'/)
+  // Still no SSL configured here, independent of allowIframe.
+  assert.doesNotMatch(csp, /upgrade-insecure-requests/)
 })
 
 test(

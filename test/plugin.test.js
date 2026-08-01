@@ -11,6 +11,7 @@ const {
 } = require('./helpers/harness')
 
 const createPlugin = load('index.js')
+const { EMBEDDED_TERMINAL_PATH } = load('config.js')
 
 const availableNative = () => ({
   available: true,
@@ -43,6 +44,8 @@ const sshDown = async (host, port) => ({
   code: 'ECONNREFUSED'
 })
 
+const sshClientAvailable = () => ({ available: true, error: null })
+
 const withFakeWetty = (overrides = {}) => {
   const app = createMockApp()
   const fake = createFakeWetty(overrides.wetty)
@@ -51,6 +54,7 @@ const withFakeWetty = (overrides = {}) => {
     probeNative: overrides.probeNative ?? availableNative,
     rebuildNative: overrides.rebuildNative,
     probeSsh: overrides.probeSsh ?? sshUp,
+    probeSshClient: overrides.probeSshClient ?? sshClientAvailable,
     ...overrides.deps
   })
   return { app, fake, plugin }
@@ -107,7 +111,6 @@ test('plugin options are mapped onto WeTTY configuration', async () => {
   await plugin.start({
     port: 4321,
     host: '127.0.0.1',
-    basePath: '/term/',
     title: 'Boat shell',
     allowIframe: false,
     command: 'bash',
@@ -123,7 +126,9 @@ test('plugin options are mapped onto WeTTY configuration', async () => {
 
   const call = fake.state.starts[0]
   assert.deepEqual(call.server, {
-    base: '/term',
+    // Not user-configurable: always the embedded proxy's own mount path, so
+    // WeTTY's self-generated links are correct wherever the proxy sits.
+    base: EMBEDDED_TERMINAL_PATH,
     port: 4321,
     host: '127.0.0.1',
     title: 'Boat shell',
@@ -190,18 +195,47 @@ test('GET /status describes a running terminal', async () => {
   const before = await call('GET /status')
   assert.equal(before.body.running, false)
 
-  await plugin.start({ port: 4444, host: '127.0.0.1', basePath: '/x' })
+  await plugin.start({ port: 4444, host: '127.0.0.1' })
   const after = await call('GET /status')
   assert.equal(after.statusCode, 200)
   assert.equal(after.body.running, true)
   assert.equal(after.body.port, 4444)
-  assert.equal(after.body.basePath, '/x')
+  assert.equal(after.body.basePath, EMBEDDED_TERMINAL_PATH)
   assert.equal(after.body.scheme, 'http')
-  assert.equal(after.body.loopbackOnly, true)
   assert.equal(after.body.error, null)
   assert.equal(after.body.native.available, true)
   assert.deepEqual(after.body, JSON.parse(JSON.stringify(after.body)))
   await plugin.stop()
+})
+
+/** Minimal stand-in for a Node ServerResponse, for the raw `.use()` route. */
+const fakeRawResponse = () => {
+  const res = {
+    statusCode: 200,
+    headersSent: false,
+    setHeader: () => {},
+    writeHead: (code) => {
+      res.statusCode = code
+    },
+    end: (chunk) => {
+      res.body = chunk
+    }
+  }
+  return res
+}
+
+test('the embedded terminal route responds 503 before the plugin has started', async () => {
+  const { plugin } = withFakeWetty()
+  const { router, handlers } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  const useHandler = handlers.get('USE /terminal')
+  assert.equal(typeof useHandler, 'function')
+
+  const res = fakeRawResponse()
+  await useHandler({ url: '/', headers: {} }, res, () => {})
+  assert.equal(res.statusCode, 503)
+  assert.match(res.body, /not running/)
 })
 
 test('GET /status reports https when a key pair is configured', async () => {
@@ -399,7 +433,7 @@ test('a reachable SSH server leaves the plugin in a plain running state', async 
   const { plugin, app } = withFakeWetty()
   await plugin.start({})
   assert.deepEqual(app.calls.pluginError, [])
-  assert.match(app.lastStatus(), /Terminal on/)
+  assert.match(app.lastStatus(), /Terminal embedded at/)
   await plugin.stop()
 })
 
@@ -421,6 +455,68 @@ test('a missing SSH server is reported without withholding the terminal', async 
   assert.match(body.ssh.help, /openssh-server/)
   assert.ok(body.ssh.checkedAt)
   assert.match(app.lastError(), /ECONNREFUSED/)
+  await plugin.stop()
+})
+
+test('a missing SSH client is reported without withholding the terminal', async () => {
+  // Same shape as a missing SSH server: the page still loads, only sessions
+  // fail, because that is all a missing client actually breaks.
+  const { plugin, app, fake } = withFakeWetty({
+    probeSshClient: () => ({
+      available: false,
+      error: 'ssh: command not found'
+    })
+  })
+  const { router, call } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  await plugin.start({})
+  assert.equal(fake.state.starts.length, 1, 'WeTTY should still be started')
+
+  const { body } = await call('GET /status')
+  assert.equal(body.running, true)
+  assert.equal(body.sshClient.available, false)
+  assert.equal(body.sshClient.error, 'ssh: command not found')
+  assert.match(body.sshClient.help, /openssh-client/)
+  assert.match(app.lastError(), /command not found/)
+  await plugin.stop()
+})
+
+test('a missing SSH client and an unreachable SSH server are both reported', async () => {
+  const { plugin, app } = withFakeWetty({
+    probeSsh: sshDown,
+    probeSshClient: () => ({
+      available: false,
+      error: 'ssh: command not found'
+    })
+  })
+  await plugin.start({})
+  assert.match(app.lastError(), /command not found/)
+  assert.match(app.lastError(), /ECONNREFUSED/)
+  await plugin.stop()
+})
+
+test('local mode does not probe for an SSH client', async () => {
+  let probes = 0
+  const { plugin } = withFakeWetty({
+    probeSshClient: () => {
+      probes += 1
+      return { available: false, error: 'ssh: command not found' }
+    }
+  })
+  const { router, call } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  await plugin.start({ mode: 'local' })
+  const { body } = await call('GET /status')
+  if (body.effectiveMode === 'local') {
+    assert.equal(probes, 0, 'local mode never shells out to ssh')
+    assert.equal(body.sshClient.available, true)
+  } else {
+    // Not running as root, so the plugin fell back to SSH and must check it.
+    assert.equal(probes, 1)
+    assert.equal(body.sshClient.available, false)
+  }
   await plugin.stop()
 })
 
@@ -509,7 +605,7 @@ test('GET /ssh-check re-runs the probe and clears the error once sshd is up', as
   assert.equal(second.body.reachable, true)
   assert.equal(second.body.banner, 'SSH-2.0-OpenSSH_9.6p1')
   assert.equal(second.body.help, '')
-  assert.match(app.lastStatus(), /Terminal on/)
+  assert.match(app.lastStatus(), /Terminal embedded at/)
 
   const { body } = await call('GET /status')
   assert.equal(body.ssh.reachable, true)

@@ -11,7 +11,6 @@ const {
   PLUGIN_SCHEMA,
   PLUGIN_UI_SCHEMA,
   effectiveMode,
-  normalizeBasePath,
   resolveOptions,
   resolveSsl
 } = load('config.js')
@@ -48,17 +47,6 @@ test('blank strings fall back to defaults but a blank password stays blank', () 
     resolveOptions({ ssh: { password: 'hunter2' } }).ssh.password,
     'hunter2'
   )
-})
-
-test('normalizeBasePath produces a leading slash and no trailing slash', () => {
-  assert.equal(normalizeBasePath(''), '/')
-  assert.equal(normalizeBasePath('/'), '/')
-  assert.equal(normalizeBasePath('///'), '/')
-  assert.equal(normalizeBasePath('wetty'), '/wetty')
-  assert.equal(normalizeBasePath('/wetty/'), '/wetty')
-  assert.equal(normalizeBasePath('/wetty///'), '/wetty')
-  assert.equal(normalizeBasePath('/a/b/'), '/a/b')
-  assert.equal(normalizeBasePath(42), '/')
 })
 
 test('unknown enum values fall back instead of reaching WeTTY', () => {

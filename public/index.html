@@ -154,13 +154,11 @@
 
       const p = (text) => el('p', { textContent: text })
 
-      // The status endpoint reports the port and scheme, but not the host: the
-      // terminal listens on the same machine as the Signal K server, and the
-      // browser already knows how it reached that machine.
-      const terminalUrl = (status) => {
-        const base = status.basePath === '/' ? '/' : status.basePath + '/'
-        return `${status.scheme}://${window.location.hostname}:${status.port}${base}`
-      }
+      // The terminal is genuinely embedded: reverse-proxied through this same
+      // origin rather than framed from a separate server on its own port, so
+      // the URL is just this plugin's own route — no host, port or scheme to
+      // work out from the browser.
+      const terminalUrl = () => `${API}/terminal/`
 
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -266,14 +264,26 @@
         return box
       }
 
-      function renderTerminal(status) {
-        const url = terminalUrl(status)
-        const warnings = []
-        if (status.loopbackOnly && window.location.hostname !== 'localhost') {
-          warnings.push(
-            'The terminal is bound to the loopback address, so it is only reachable from the Signal K server itself.'
-          )
+      // A missing ssh client fails every session exactly like a missing SSH
+      // server does, but there is nothing to re-check live: installing a
+      // package does not change anything the running plugin process can see
+      // until it restarts, so this omits the "Check again" button ssh
+      // server gets and says so instead.
+      function sshClientWarning(status) {
+        if (status.sshClient.available) {
+          return null
         }
+        return el('div', { className: 'panel error notice' }, [
+          el('h1', { textContent: 'No SSH client' }),
+          p(status.sshClient.error || 'No SSH client is installed.'),
+          el('pre', { textContent: status.sshClient.help }),
+          p('Restart the plugin after installing to pick this up.')
+        ])
+      }
+
+      function renderTerminal(status) {
+        const url = terminalUrl()
+        const warnings = []
         if (
           status.requestedMode === 'local' &&
           status.effectiveMode === 'ssh'
@@ -296,7 +306,9 @@
           })
         ])
 
+        const sshClient = sshClientWarning(status)
         const ssh = sshWarning(status)
+        const sshNotices = [sshClient, ssh].filter(Boolean)
 
         if (!status.allowIframe) {
           panel('Terminal ready', [
@@ -310,14 +322,14 @@
               rel: 'noopener',
               textContent: 'Open the terminal'
             }),
-            ...(ssh ? [ssh] : [])
+            ...sshNotices
           ])
           return
         }
 
         root.replaceChildren(
           bar,
-          ...(ssh ? [ssh] : []),
+          ...sshNotices,
           el('iframe', {
             src: url,
             title: 'WeTTY terminal',

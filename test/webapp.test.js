@@ -30,12 +30,12 @@ test('the webapp sends the admin session along with its requests', () => {
   }
 })
 
-test('the terminal URL is built from the browsers own hostname', () => {
-  // The status endpoint deliberately does not report a hostname: the terminal
-  // runs on the same machine as the server, and only the browser knows which
-  // address it used to get there.
-  assert.match(html, /window\.location\.hostname/)
-  assert.ok(!/localhost:\$\{/.test(html))
+test('the terminal is reached through the same-origin embedded proxy path', () => {
+  // Genuinely embedded: reverse-proxied through this same origin, so the URL
+  // is just this plugin's own route — no separate host, port or scheme to
+  // work out from the browser.
+  assert.match(html, /\$\{API\}\/terminal/)
+  assert.ok(!/window\.location\.hostname/.test(html))
 })
 
 test('the webapp is self-contained', () => {
@@ -68,7 +68,7 @@ test('every branch of the status payload has a rendering path', () => {
     'renderError',
     'status.native.available',
     'status.allowIframe',
-    'status.loopbackOnly',
+    'status.sshClient.available',
     'status.ssh.reachable',
     'res.status === 401'
   ]) {

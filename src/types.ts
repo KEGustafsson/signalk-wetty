@@ -1,3 +1,5 @@
+import type { IncomingMessage, Server, ServerResponse } from 'node:http'
+
 /**
  * Minimal structural types for the parts of the Signal K plugin API this
  * plugin actually touches. Declaring them locally (instead of depending on
@@ -12,12 +14,32 @@ export interface PluginServerApp {
   error: (...args: unknown[]) => void
   setPluginStatus: (msg: string) => void
   setPluginError: (msg: string) => void
+  /**
+   * The Signal K server's own underlying HTTP server. Exposed by real Signal
+   * K servers so a plugin can genuinely embed a service — including
+   * forwarding WebSocket upgrades — under the server's own origin, rather
+   * than running it on a separate port. See src/embedded-proxy.ts.
+   */
+  server?: Server
 }
+
+/**
+ * A plain middleware handler, as `express.Router#use` accepts — unlike
+ * `RouteHandler` below, it works with real Node request/response objects
+ * rather than the minimal structural stand-ins, which the embedded terminal
+ * proxy needs to actually forward requests.
+ */
+export type UseHandler = (
+  req: IncomingMessage,
+  res: ServerResponse,
+  next: (err?: unknown) => void
+) => void | Promise<void>
 
 /** The subset of Express' Router surface used by `registerWithRouter`. */
 export interface PluginRouterLike {
   get: (path: string, handler: RouteHandler) => unknown
   post: (path: string, handler: RouteHandler) => unknown
+  use: (path: string, handler: UseHandler) => unknown
 }
 
 export interface RouteRequest {
@@ -62,8 +84,6 @@ export interface PluginStatus {
   scheme: 'http' | 'https'
   port: number
   basePath: string
-  /** True when the bind address only accepts connections from the server itself. */
-  loopbackOnly: boolean
   allowIframe: boolean
   requestedMode: string
   effectiveMode: string
@@ -74,6 +94,12 @@ export interface PluginStatus {
     help: string
   }
   rebuild: RebuildState
+  /** Whether the local `ssh` binary is installed; irrelevant in local mode. */
+  sshClient: {
+    available: boolean
+    error: string | null
+    help: string
+  }
   ssh: SshCheck
 }
 
