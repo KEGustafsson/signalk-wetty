@@ -1,0 +1,14 @@
+# Normalise every text file to LF in the working tree on every platform.
+# Without this the Windows CI runner checks out CRLF and `prettier --check`
+# reports a style violation in every file, which fails the format-check step
+# of the Signal K plugin CI.
+* text=auto eol=lf
+
+# docker/entrypoint.sh must keep LF regardless: a CRLF shebang line is not
+# executable inside the container.
+*.sh text eol=lf
+
+*.ico binary
+*.jpg binary
+*.png binary
+*.tgz binary

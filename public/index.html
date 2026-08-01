@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="app-icon.svg" />
+    <title>WeTTY Terminal</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #1e1e1e;
+        --panel: #262626;
+        --fg: #e6e6e6;
+        --muted: #9aa0a6;
+        --accent: #4a9eff;
+        --danger: #ff6b6b;
+        --border: #3a3a3a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          14px/1.5 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+      }
+      #root {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      iframe {
+        flex: 1 1 auto;
+        width: 100%;
+        border: 0;
+        background: var(--bg);
+      }
+      .panel {
+        margin: auto;
+        max-width: 46rem;
+        width: calc(100% - 2rem);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1.5rem;
+      }
+      .panel h1 {
+        margin: 0 0 0.5rem;
+        font-size: 1.25rem;
+      }
+      .panel p {
+        margin: 0.5rem 0;
+        color: var(--muted);
+      }
+      .panel code,
+      pre {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      pre {
+        max-height: 18rem;
+        overflow: auto;
+        background: #141414;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.75rem;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .error h1 {
+        color: var(--danger);
+      }
+      button,
+      a.button {
+        display: inline-block;
+        margin-top: 0.75rem;
+        padding: 0.5rem 1rem;
+        border: 1px solid var(--accent);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--accent);
+        font: inherit;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: progress;
+      }
+      button:hover:not(:disabled),
+      a.button:hover {
+        background: rgba(74, 158, 255, 0.12);
+      }
+      /* The SSH notice sits above the terminal rather than replacing it, so it
+         must not grow to fill the page the way a standalone panel does. */
+      .notice {
+        margin: 0.75rem auto 0;
+        flex: 0 0 auto;
+      }
+      .bar {
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.4rem 0.75rem;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .bar a {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="panel">
+        <h1>WeTTY Terminal</h1>
+        <p>Loading…</p>
+      </div>
+    </div>
+
+    <script>
+      // The plugin routes live under the server's own origin, so the admin
+      // session cookie is sent along and the routes stay admin-only.
+      const API = '/plugins/signalk-wetty'
+      const root = document.getElementById('root')
+
+      const el = (tag, props = {}, children = []) => {
+        const node = Object.assign(document.createElement(tag), props)
+        for (const child of [].concat(children)) {
+          node.append(child)
+        }
+        return node
+      }
+
+      const panel = (title, nodes, className = 'panel') => {
+        const box = el('div', { className }, [el('h1', { textContent: title })])
+        for (const node of nodes) {
+          box.append(node)
+        }
+        root.replaceChildren(box)
+        return box
+      }
+
+      const p = (text) => el('p', { textContent: text })
+
+      // The status endpoint reports the port and scheme, but not the host: the
+      // terminal listens on the same machine as the Signal K server, and the
+      // browser already knows how it reached that machine.
+      const terminalUrl = (status) => {
+        const base = status.basePath === '/' ? '/' : status.basePath + '/'
+        return `${status.scheme}://${window.location.hostname}:${status.port}${base}`
+      }
+
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+      const fetchStatus = () =>
+        fetch(`${API}/status`, { credentials: 'same-origin' }).then((res) => {
+          if (!res.ok) {
+            throw new Error(`status endpoint returned HTTP ${res.status}`)
+          }
+          return res.json()
+        })
+
+      // The server answers the rebuild request immediately and reports progress
+      // through the status route, so nothing here waits on a request that a
+      // proxy would time out during a multi-minute compile.
+      async function awaitRebuild(onTick) {
+        const started = Date.now()
+        while (Date.now() - started < 20 * 60 * 1000) {
+          await sleep(3000)
+          const status = await fetchStatus()
+          if (!status.rebuild.running) {
+            return status.rebuild
+          }
+          onTick(Math.round((Date.now() - started) / 1000))
+        }
+        throw new Error('Timed out waiting for the rebuild to finish.')
+      }
+
+      function renderError(status) {
+        const nodes = [p(status.error || status.message)]
+        if (!status.native.available) {
+          nodes.push(p(status.native.help))
+          const output = el('pre', { hidden: true })
+          const button = el('button', { textContent: 'Rebuild node-pty' })
+          button.addEventListener('click', async () => {
+            button.disabled = true
+            output.hidden = false
+            output.textContent = 'Starting npm rebuild node-pty…'
+            try {
+              const res = await fetch(`${API}/rebuild-native`, {
+                method: 'POST',
+                credentials: 'same-origin'
+              })
+              const body = await res.json()
+              if (res.status === 200 && body.nativeAvailable) {
+                output.textContent = body.output
+                button.textContent = 'Already built — reload this page'
+                return
+              }
+              if (!res.ok && res.status !== 409) {
+                throw new Error(body.output || `HTTP ${res.status}`)
+              }
+              const result = await awaitRebuild((seconds) => {
+                button.textContent = `Rebuilding… ${seconds}s`
+              })
+              output.textContent = result.output || '(no output)'
+              button.textContent = result.ok
+                ? 'Done — restart the plugin, then reload this page'
+                : 'Rebuild failed — see the output below'
+            } catch (err) {
+              output.textContent = String(err)
+              button.textContent = 'Rebuild failed'
+            }
+          })
+          nodes.push(button, output)
+        }
+        panel('Terminal unavailable', nodes, 'panel error')
+      }
+
+      // A missing SSH server does not stop the terminal from loading, it stops
+      // every session inside it — so it needs saying before the user types
+      // anything, together with the commands that fix it.
+      function sshWarning(status) {
+        if (!status.ssh.checked || status.ssh.reachable) {
+          return null
+        }
+        const box = el('div', { className: 'panel error notice' }, [
+          el('h1', { textContent: 'No SSH server' }),
+          p(status.ssh.error || 'The SSH server could not be reached.'),
+          el('pre', { textContent: status.ssh.help })
+        ])
+        const button = el('button', { textContent: 'Check again' })
+        button.addEventListener('click', async () => {
+          button.disabled = true
+          button.textContent = 'Checking…'
+          try {
+            const res = await fetch(`${API}/ssh-check`, {
+              credentials: 'same-origin'
+            })
+            const result = await res.json()
+            if (result.reachable) {
+              button.textContent = `Found ${result.banner || 'an SSH server'} — reloading…`
+              load()
+              return
+            }
+            button.disabled = false
+            button.textContent = 'Check again'
+          } catch (err) {
+            button.disabled = false
+            button.textContent = `Check failed: ${err}`
+          }
+        })
+        box.append(button)
+        return box
+      }
+
+      function renderTerminal(status) {
+        const url = terminalUrl(status)
+        const warnings = []
+        if (status.loopbackOnly && window.location.hostname !== 'localhost') {
+          warnings.push(
+            'The terminal is bound to the loopback address, so it is only reachable from the Signal K server itself.'
+          )
+        }
+        if (
+          status.requestedMode === 'local' &&
+          status.effectiveMode === 'ssh'
+        ) {
+          warnings.push(
+            'Local mode needs the server to run as root; falling back to SSH.'
+          )
+        }
+
+        const bar = el('div', { className: 'bar' }, [
+          el('span', {
+            textContent: warnings.join(' ') || `Terminal at ${url}`
+          }),
+          el('a', {
+            className: '',
+            href: url,
+            target: '_blank',
+            rel: 'noopener',
+            textContent: 'Open in a new tab ↗'
+          })
+        ])
+
+        const ssh = sshWarning(status)
+
+        if (!status.allowIframe) {
+          panel('Terminal ready', [
+            p(
+              'Embedding is disabled in the plugin configuration, so the terminal cannot be shown here.'
+            ),
+            el('a', {
+              className: 'button',
+              href: url,
+              target: '_blank',
+              rel: 'noopener',
+              textContent: 'Open the terminal'
+            }),
+            ...(ssh ? [ssh] : [])
+          ])
+          return
+        }
+
+        root.replaceChildren(
+          bar,
+          ...(ssh ? [ssh] : []),
+          el('iframe', {
+            src: url,
+            title: 'WeTTY terminal',
+            allow: 'clipboard-read; clipboard-write'
+          })
+        )
+      }
+
+      async function load() {
+        let status
+        try {
+          const res = await fetch(`${API}/status`, {
+            credentials: 'same-origin'
+          })
+          if (res.status === 401 || res.status === 403) {
+            panel(
+              'Login required',
+              [p('Log in to the Signal K admin UI to use the terminal.')],
+              'panel error'
+            )
+            return
+          }
+          if (!res.ok) {
+            throw new Error(`status endpoint returned HTTP ${res.status}`)
+          }
+          status = await res.json()
+        } catch (err) {
+          panel(
+            'Plugin not reachable',
+            [
+              p(String(err)),
+              p('Is the signalk-wetty plugin enabled in the admin UI?')
+            ],
+            'panel error'
+          )
+          return
+        }
+
+        if (!status.running || status.error) {
+          renderError(status)
+          return
+        }
+        renderTerminal(status)
+      }
+
+      load()
+    </script>
+  </body>
+</html>
