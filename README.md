@@ -43,7 +43,7 @@ Then restart the server and enable the plugin.
 
 ## How it works
 
-```
+```text
 browser ──▶ Signal K server :3000 ──▶ /signalk-wetty/       the webapp shell
                                  └──▶ /plugins/signalk-wetty/status
                                                      admin-only status route

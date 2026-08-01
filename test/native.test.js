@@ -50,10 +50,32 @@ test('rebuilding without a located install fails cleanly rather than spawning np
 test('a rebuild that cannot be started resolves instead of rejecting', async () => {
   // A non-existent cwd makes the spawn fail immediately, which stands in for
   // any environment where npm is not on PATH.
-  const result = await rebuildNodePty({
-    available: false,
-    projectDir: path.join(__dirname, 'no-such-directory-9f3a')
-  })
+  // An explicit short timeout keeps the test bounded even on a platform where
+  // the spawn unexpectedly succeeds; the default is ten minutes.
+  const result = await rebuildNodePty(
+    {
+      available: false,
+      projectDir: path.join(__dirname, 'no-such-directory-9f3a')
+    },
+    2000
+  )
   assert.equal(result.ok, false)
   assert.equal(typeof result.output, 'string')
+})
+
+test('a rebuild always settles, timeout or not', async () => {
+  // Runs in an empty temp directory so npm cannot touch this repo's
+  // node_modules. Whether npm finishes first or the timeout kills it, the
+  // promise must settle: if it did not, the request that started the rebuild
+  // would hang until the client gave up.
+  const fs = require('node:fs')
+  const os = require('node:os')
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wetty-rebuild-'))
+  try {
+    const result = await rebuildNodePty({ available: false, projectDir }, 250)
+    assert.equal(typeof result.ok, 'boolean')
+    assert.equal(typeof result.output, 'string')
+  } finally {
+    fs.rmSync(projectDir, { recursive: true, force: true })
+  }
 })

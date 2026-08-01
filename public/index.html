@@ -155,6 +155,32 @@
         return `${status.scheme}://${window.location.hostname}:${status.port}${base}`
       }
 
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+      const fetchStatus = () =>
+        fetch(`${API}/status`, { credentials: 'same-origin' }).then((res) => {
+          if (!res.ok) {
+            throw new Error(`status endpoint returned HTTP ${res.status}`)
+          }
+          return res.json()
+        })
+
+      // The server answers the rebuild request immediately and reports progress
+      // through the status route, so nothing here waits on a request that a
+      // proxy would time out during a multi-minute compile.
+      async function awaitRebuild(onTick) {
+        const started = Date.now()
+        while (Date.now() - started < 20 * 60 * 1000) {
+          await sleep(3000)
+          const status = await fetchStatus()
+          if (!status.rebuild.running) {
+            return status.rebuild
+          }
+          onTick(Math.round((Date.now() - started) / 1000))
+        }
+        throw new Error('Timed out waiting for the rebuild to finish.')
+      }
+
       function renderError(status) {
         const nodes = [p(status.error || status.message)]
         if (!status.native.available) {
@@ -163,17 +189,27 @@
           const button = el('button', { textContent: 'Rebuild node-pty' })
           button.addEventListener('click', async () => {
             button.disabled = true
-            button.textContent = 'Rebuilding, this can take several minutes…'
             output.hidden = false
-            output.textContent = 'Running npm rebuild node-pty…'
+            output.textContent = 'Starting npm rebuild node-pty…'
             try {
               const res = await fetch(`${API}/rebuild-native`, {
                 method: 'POST',
                 credentials: 'same-origin'
               })
               const body = await res.json()
-              output.textContent = body.output || '(no output)'
-              button.textContent = body.nativeAvailable
+              if (res.status === 200 && body.nativeAvailable) {
+                output.textContent = body.output
+                button.textContent = 'Already built — reload this page'
+                return
+              }
+              if (!res.ok && res.status !== 409) {
+                throw new Error(body.output || `HTTP ${res.status}`)
+              }
+              const result = await awaitRebuild((seconds) => {
+                button.textContent = `Rebuilding… ${seconds}s`
+              })
+              output.textContent = result.output || '(no output)'
+              button.textContent = result.ok
                 ? 'Done — restart the plugin, then reload this page'
                 : 'Rebuild failed — see the output below'
             } catch (err) {

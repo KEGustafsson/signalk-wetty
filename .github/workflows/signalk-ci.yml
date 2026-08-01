@@ -13,6 +13,13 @@
 
 name: Signal K Plugin CI
 
+# The reusable workflow only ever reads this repository — it installs, builds
+# and tests the plugin, and never writes to any GitHub resource. Declaring the
+# scope here caps the GITHUB_TOKEN handed to it rather than inheriting whatever
+# the repository default happens to be.
+permissions:
+  contents: read
+
 on:
   push:
     branches:

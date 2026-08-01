@@ -299,7 +299,7 @@ export const PLUGIN_SCHEMA: JsonSchema = {
           type: 'string',
           title: 'Known hosts file',
           description:
-            'Set to a real known_hosts path to enable strict host key checking. /dev/null disables it.',
+            'Set to a real known_hosts path to enable strict host key checking. The default of /dev/null disables it, which allows host key substitution — only keep it while the SSH host is localhost.',
           default: DEFAULTS.ssh.knownHosts
         },
         keyPath: {

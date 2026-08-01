@@ -21,6 +21,7 @@ import type {
   PluginRouterLike,
   PluginServerApp,
   PluginStatus,
+  RebuildState,
   RouteResponse,
   SignalKPlugin
 } from './types'
@@ -28,12 +29,21 @@ import type {
 const describeError = (err: unknown): string =>
   err instanceof Error ? err.message : String(err)
 
+const idleRebuild = (): RebuildState => ({
+  running: false,
+  startedAt: null,
+  finishedAt: null,
+  ok: null,
+  output: ''
+})
+
 const buildStatus = (
   options: ResolvedOptions,
   running: boolean,
   message: string,
   error: string | null,
-  native: NativeProbeResult
+  native: NativeProbeResult,
+  rebuild: RebuildState
 ): PluginStatus => ({
   running,
   message,
@@ -50,7 +60,8 @@ const buildStatus = (
     available: native.available,
     error: native.error ?? null,
     help: nativeHelpText(native)
-  }
+  },
+  rebuild
 })
 
 /** Signal K plugin entry point. */
@@ -74,6 +85,7 @@ function signalkWetty(
   let native: NativeProbeResult = { available: false, error: 'not probed yet' }
   let message = 'Not started'
   let error: string | null = null
+  let rebuild: RebuildState = idleRebuild()
 
   const setStatus = (msg: string) => {
     message = msg
@@ -157,40 +169,81 @@ function signalkWetty(
 
   const registerWithRouter = (router: PluginRouterLike): void => {
     router.get('/status', (_req, res: RouteResponse) => {
-      res.json(buildStatus(options, runner.running, message, error, native))
+      res.json(
+        buildStatus(options, runner.running, message, error, native, rebuild)
+      )
     })
 
+    // The rebuild runs detached from the request. Compiling node-pty takes
+    // minutes on a Raspberry Pi, and holding the response open that long means
+    // any proxy or browser in front of the admin UI times out first and reports
+    // a failure for a build that is still running happily. The webapp polls
+    // GET /status for the outcome instead.
     router.post('/rebuild-native', (_req, res: RouteResponse) => {
+      if (rebuild.running) {
+        // Two rebuilds in one directory put two node-gyp runs in the same
+        // build/ tree, which can leave node-pty broken rather than fixed.
+        res.status(409).json({
+          started: false,
+          running: true,
+          output: 'A node-pty rebuild is already running.'
+        })
+        return
+      }
+
       const probe = probeNative()
       if (probe.available) {
         native = probe
-        res.json({
+        res.status(200).json({
+          started: false,
+          running: false,
           ok: true,
           nativeAvailable: true,
           output: 'node-pty is already built — nothing to do.'
         })
         return
       }
+
+      rebuild = {
+        running: true,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        ok: null,
+        output: ''
+      }
       setStatus('Rebuilding node-pty, this can take several minutes…')
+
+      const finish = (ok: boolean, output: string) => {
+        native = probeNative()
+        rebuild = {
+          ...rebuild,
+          running: false,
+          finishedAt: new Date().toISOString(),
+          ok: ok && native.available,
+          output
+        }
+        if (rebuild.ok) {
+          setStatus(
+            'node-pty rebuilt — restart the plugin to start the terminal'
+          )
+        } else {
+          setError(`node-pty rebuild failed. ${nativeHelpText(native)}`)
+        }
+      }
+
       rebuildNative(probe)
         .then((result) => {
-          native = probeNative()
-          if (result.ok && native.available) {
-            setStatus(
-              'node-pty rebuilt — restart the plugin to start the terminal'
-            )
-          } else {
-            setError(`node-pty rebuild failed. ${nativeHelpText(native)}`)
-          }
-          res.json({ ...result, nativeAvailable: native.available })
+          finish(result.ok, result.output)
         })
         .catch((err: unknown) => {
-          const detail = describeError(err)
-          setError(`node-pty rebuild failed: ${detail}`)
-          res
-            .status(500)
-            .json({ ok: false, nativeAvailable: false, output: detail })
+          finish(false, describeError(err))
         })
+
+      res.status(202).json({
+        started: true,
+        running: true,
+        output: 'Rebuilding node-pty. Poll the status route for the outcome.'
+      })
     })
   }
 

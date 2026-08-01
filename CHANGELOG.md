@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `POST /plugins/signalk-wetty/rebuild-native` now answers `202` immediately and
+  reports progress through `rebuild` in the status payload, instead of holding
+  the response open for the whole compile. A proxy in front of the admin UI
+  would otherwise time out and report a failure for a build still in progress.
+- A second rebuild request while one is running is refused with `409` rather
+  than starting a second `node-gyp` run in the same build directory.
+
+### Fixed
+
+- A `node-pty` rebuild that hits its timeout now settles instead of leaving the
+  caller waiting forever — killing the child does not guarantee a `close` event,
+  particularly on Windows where the child is a shell wrapper.
+- `docker/entrypoint.sh` sets the Signal K port through `PORT`; the `-p` flag it
+  used before is not a `signalk-server` option and was silently ignored.
+- Text files are checked out with LF everywhere, so the format check passes on
+  Windows CI runners.
+
 ## [0.1.0] - 2026-08-01
 
 Initial release.

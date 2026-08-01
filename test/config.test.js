@@ -154,6 +154,19 @@ test('nested schema objects cover their resolved options too', () => {
   }
 })
 
+test('ui:order covers every top-level schema property', () => {
+  // react-jsonschema-form refuses to render a form whose ui:order omits a
+  // property and has no wildcard, so a new option must be added to both.
+  const order = PLUGIN_UI_SCHEMA['ui:order']
+  assert.ok(Array.isArray(order))
+  if (!order.includes('*')) {
+    assert.deepEqual(
+      [...order].sort(),
+      Object.keys(PLUGIN_SCHEMA.properties).sort()
+    )
+  }
+})
+
 test('schema defaults match the resolved defaults', () => {
   const check = (schemaProps, defaults, prefix) => {
     for (const [key, spec] of Object.entries(schemaProps)) {

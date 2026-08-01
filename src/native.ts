@@ -30,11 +30,13 @@ const errorMessage = (err: unknown): string =>
   err instanceof Error ? err.message : String(err)
 
 /**
- * Candidate resolution roots, in order: this plugin's own directory (npm
- * hoists node-pty next to the plugin in the common case), then WeTTY's own
- * package directory (for a nested install).
+ * Candidate resolution roots for anything inside WeTTY's dependency tree, in
+ * order: this plugin's own directory (npm hoists dependencies next to the
+ * plugin in the common case), then WeTTY's own package directory (for a nested
+ * install). Only directories belong here — `require.resolve`'s `paths` option
+ * walks up from each entry looking for `node_modules`.
  */
-const resolutionPaths = (): string[] => {
+export const resolutionPaths = (): string[] => {
   const paths = [__dirname]
   try {
     // wetty is ESM-only, so only the package root is exported; resolving the
@@ -138,22 +140,39 @@ export const rebuildNodePty = (
     child.stdout?.on('data', collect)
     child.stderr?.on('data', collect)
 
+    // The timeout has to settle the promise itself rather than rely on a
+    // subsequent 'close': killing the process is not guaranteed to produce
+    // one. On Windows the child is a shell wrapper, so SIGKILL reaches cmd.exe
+    // and npm can outlive it — and a promise that never settles leaves the
+    // HTTP request that triggered the rebuild hanging forever.
+    let settled = false
+    const settle = (result: RebuildResult) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timer)
+      resolve(result)
+    }
+
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
-      output += `\nTimed out after ${Math.round(timeoutMs / 1000)}s.`
+      settle({
+        ok: false,
+        output:
+          `${output}\nTimed out after ${Math.round(timeoutMs / 1000)}s.`.trim()
+      })
     }, timeoutMs)
     timer.unref?.()
 
     child.on('error', (err) => {
-      clearTimeout(timer)
-      resolve({
+      settle({
         ok: false,
-        output: `${output}\nFailed to run npm: ${err.message}`
+        output: `${output}\nFailed to run npm: ${err.message}`.trim()
       })
     })
 
     child.on('close', (code) => {
-      clearTimeout(timer)
-      resolve({ ok: code === 0, output: output.trim() })
+      settle({ ok: code === 0, output: output.trim() })
     })
   })

@@ -1,5 +1,6 @@
 import type { LogLevel, ResolvedOptions } from './config'
 import { effectiveMode, resolveSsl } from './config'
+import { resolutionPaths } from './native'
 
 /**
  * WeTTY 3.x is an ESM-only package, and this plugin is compiled to CommonJS so
@@ -103,13 +104,9 @@ const isDuplicateMetricError = (err: unknown): boolean =>
  */
 const clearPrometheusRegistry = (): void => {
   try {
-    const paths = [__dirname]
-    try {
-      paths.push(require.resolve('wetty'))
-    } catch {
-      // Fall back to this plugin's own resolution paths.
-    }
-    const promClient = require(require.resolve('prom-client', { paths })) as {
+    const promClient = require(
+      require.resolve('prom-client', { paths: resolutionPaths() })
+    ) as {
       register?: { clear?: () => void }
     }
     promClient.register?.clear?.()

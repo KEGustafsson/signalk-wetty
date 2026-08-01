@@ -131,7 +131,7 @@ test('the configured log level is applied to WeTTYs logger', async () => {
 
 test('a failing WeTTY start is reported instead of thrown', async () => {
   const { plugin, app } = withFakeWetty({
-    wetty: { failWith: Object.assign(new Error('listen EADDRINUSE'), {}) }
+    wetty: { failWith: new Error('listen EADDRINUSE') }
   })
   await plugin.start({ port: 3001 })
   const message = app.lastError()
@@ -209,6 +209,18 @@ test('GET /status surfaces the native build problem to the webapp', async () => 
   assert.match(body.error, /node-pty/)
 })
 
+/** Polls the status route the way the webapp does, until the rebuild settles. */
+const awaitRebuild = async (call) => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const { body } = await call('GET /status')
+    if (!body.rebuild.running) {
+      return body.rebuild
+    }
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  throw new Error('rebuild never finished')
+}
+
 test('POST /rebuild-native short-circuits when node-pty already works', async () => {
   let rebuilds = 0
   const { plugin } = withFakeWetty({
@@ -219,13 +231,72 @@ test('POST /rebuild-native short-circuits when node-pty already works', async ()
   })
   const { router, call } = createMockRouter()
   plugin.registerWithRouter(router)
-  const { body } = await call('POST /rebuild-native')
-  assert.equal(body.ok, true)
+  const { statusCode, body } = await call('POST /rebuild-native')
+  assert.equal(statusCode, 200)
+  assert.equal(body.started, false)
   assert.equal(body.nativeAvailable, true)
   assert.equal(rebuilds, 0)
 })
 
-test('POST /rebuild-native reports a successful build', async () => {
+test('POST /rebuild-native answers immediately instead of holding the request', async () => {
+  // Compiling node-pty takes minutes on a Pi; a held response would be cut off
+  // by any proxy in front of the admin UI long before the build finishes.
+  let release
+  const app = createMockApp()
+  const plugin = createPlugin(app, {
+    loadWetty: async () => createFakeWetty().module,
+    probeNative: missingNative,
+    rebuildNative: () =>
+      new Promise((resolve) => {
+        release = () => resolve({ ok: false, output: 'done' })
+      })
+  })
+  const { router, call } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  const { statusCode, body } = await call('POST /rebuild-native')
+  assert.equal(statusCode, 202)
+  assert.equal(body.started, true)
+
+  const during = await call('GET /status')
+  assert.equal(during.body.rebuild.running, true)
+  assert.equal(during.body.rebuild.ok, null)
+  assert.ok(during.body.rebuild.startedAt)
+
+  release()
+  const finished = await awaitRebuild(call)
+  assert.equal(finished.running, false)
+  assert.ok(finished.finishedAt)
+})
+
+test('a second rebuild request is refused while one is running', async () => {
+  // Two npm rebuilds in one directory means two node-gyp runs writing to the
+  // same build/ tree, which can leave node-pty broken rather than fixed.
+  let starts = 0
+  let release
+  const plugin = createPlugin(createMockApp(), {
+    loadWetty: async () => createFakeWetty().module,
+    probeNative: missingNative,
+    rebuildNative: () =>
+      new Promise((resolve) => {
+        starts += 1
+        release = () => resolve({ ok: true, output: 'gyp info ok' })
+      })
+  })
+  const { router, call } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  await call('POST /rebuild-native')
+  const second = await call('POST /rebuild-native')
+  assert.equal(second.statusCode, 409)
+  assert.equal(second.body.started, false)
+  assert.equal(starts, 1)
+
+  release()
+  await awaitRebuild(call)
+})
+
+test('a successful rebuild is reported through the status route', async () => {
   let probes = 0
   const app = createMockApp()
   const plugin = createPlugin(app, {
@@ -237,14 +308,17 @@ test('POST /rebuild-native reports a successful build', async () => {
   const { router, call } = createMockRouter()
   plugin.registerWithRouter(router)
 
-  const { statusCode, body } = await call('POST /rebuild-native')
-  assert.equal(statusCode, 200)
-  assert.equal(body.ok, true)
-  assert.equal(body.nativeAvailable, true)
+  await call('POST /rebuild-native')
+  const result = await awaitRebuild(call)
+  assert.equal(result.ok, true)
+  assert.match(result.output, /gyp info ok/)
   assert.match(app.lastStatus(), /restart the plugin/)
+
+  const { body } = await call('GET /status')
+  assert.equal(body.native.available, true)
 })
 
-test('POST /rebuild-native reports a failed build with its output', async () => {
+test('a failed rebuild keeps its output and reports a plugin error', async () => {
   const app = createMockApp()
   const plugin = createPlugin(app, {
     loadWetty: async () => createFakeWetty().module,
@@ -254,14 +328,14 @@ test('POST /rebuild-native reports a failed build with its output', async () => 
   const { router, call } = createMockRouter()
   plugin.registerWithRouter(router)
 
-  const { body } = await call('POST /rebuild-native')
-  assert.equal(body.ok, false)
-  assert.equal(body.nativeAvailable, false)
-  assert.match(body.output, /gyp ERR!/)
+  await call('POST /rebuild-native')
+  const result = await awaitRebuild(call)
+  assert.equal(result.ok, false)
+  assert.match(result.output, /gyp ERR!/)
   assert.match(app.lastError(), /rebuild failed/)
 })
 
-test('POST /rebuild-native answers with 500 when the rebuild itself throws', async () => {
+test('a rebuild that throws is reported rather than left unhandled', async () => {
   const app = createMockApp()
   const plugin = createPlugin(app, {
     loadWetty: async () => createFakeWetty().module,
@@ -273,10 +347,33 @@ test('POST /rebuild-native answers with 500 when the rebuild itself throws', asy
   const { router, call } = createMockRouter()
   plugin.registerWithRouter(router)
 
-  const { statusCode, body } = await call('POST /rebuild-native')
-  assert.equal(statusCode, 500)
-  assert.equal(body.ok, false)
-  assert.match(body.output, /ENOENT/)
+  const { statusCode } = await call('POST /rebuild-native')
+  assert.equal(statusCode, 202)
+  const result = await awaitRebuild(call)
+  assert.equal(result.ok, false)
+  assert.match(result.output, /ENOENT/)
+  assert.match(app.lastError(), /rebuild failed/)
+})
+
+test('a rebuild can be started again after one finished', async () => {
+  let starts = 0
+  const plugin = createPlugin(createMockApp(), {
+    loadWetty: async () => createFakeWetty().module,
+    probeNative: missingNative,
+    rebuildNative: async () => {
+      starts += 1
+      return { ok: false, output: 'gyp ERR! not ok' }
+    }
+  })
+  const { router, call } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  await call('POST /rebuild-native')
+  await awaitRebuild(call)
+  const second = await call('POST /rebuild-native')
+  assert.equal(second.statusCode, 202)
+  await awaitRebuild(call)
+  assert.equal(starts, 2)
 })
 
 test('the SSH password is never written to the debug log', async () => {

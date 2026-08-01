@@ -83,6 +83,63 @@ test('stop() swallows a throwing close so the server can shut down', async () =>
   assert.equal(runner.running, false)
 })
 
+test('a late listen error rejects the start and closes the server', async () => {
+  // WeTTY resolves its promise before listen() has succeeded or failed, so an
+  // EADDRINUSE arrives afterwards as an error event. Unhandled, that event
+  // takes the whole Signal K server process down.
+  let closed = 0
+  const runner = new WettyRunner(async () => ({
+    start: async () => ({
+      close: (cb) => {
+        closed += 1
+        if (cb) {
+          cb()
+        }
+      },
+      httpServer: {
+        listening: false,
+        close: (cb) => cb && cb(),
+        on: () => {},
+        once: (event, handler) => {
+          if (event === 'error') {
+            setImmediate(() => handler(new Error('listen EADDRINUSE :::3001')))
+          }
+        },
+        removeListener: () => {}
+      }
+    }),
+    getLogger: () => undefined
+  }))
+
+  await assert.rejects(() => runner.start(resolveOptions({})), /EADDRINUSE/)
+  assert.equal(runner.running, false)
+  assert.equal(closed, 1, 'the half-open server should have been closed')
+})
+
+test('a start resolves once the server reports it is listening', async () => {
+  const runner = new WettyRunner(async () => ({
+    start: async () => ({
+      close: (cb) => cb && cb(),
+      httpServer: {
+        listening: false,
+        close: (cb) => cb && cb(),
+        on: () => {},
+        once: (event, handler) => {
+          if (event === 'listening') {
+            setImmediate(handler)
+          }
+        },
+        removeListener: () => {}
+      }
+    }),
+    getLogger: () => undefined
+  }))
+
+  await runner.start(resolveOptions({}))
+  assert.equal(runner.running, true)
+  await runner.stop()
+})
+
 test('idle keep-alive connections are dropped on stop', async () => {
   let closedAll = 0
   const runner = new WettyRunner(async () => ({
@@ -102,7 +159,7 @@ test('idle keep-alive connections are dropped on stop', async () => {
   assert.equal(closedAll, 1)
 })
 
-test('a restart retries once when prom-client rejects a duplicate metric', async () => {
+test('a start retries once when prom-client rejects a duplicate metric', async () => {
   let attempts = 0
   const runner = new WettyRunner(async () => ({
     start: async () => {

@@ -31,6 +31,16 @@ export interface RouteResponse {
 
 export type RouteHandler = (req: RouteRequest, res: RouteResponse) => void
 
+/** Progress of a `node-pty` rebuild, polled by the webapp while it runs. */
+export interface RebuildState {
+  running: boolean
+  startedAt: string | null
+  finishedAt: string | null
+  /** null until a rebuild has finished in this process. */
+  ok: boolean | null
+  output: string
+}
+
 /** Payload of `GET /plugins/signalk-wetty/status`, consumed by the webapp. */
 export interface PluginStatus {
   running: boolean
@@ -50,6 +60,7 @@ export interface PluginStatus {
     error: string | null
     help: string
   }
+  rebuild: RebuildState
 }
 
 export interface SignalKPlugin {

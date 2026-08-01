@@ -43,6 +43,12 @@ RUN apt-get update \
     && ssh-keygen -A \
     && mkdir -p /run/sshd
 
+# Static analysis flags both of the next two lines, and both are deliberate for
+# this image: it is a throwaway local integration environment, rebuilt from
+# scratch on every `docker compose up --build` and never published. The fixed
+# password exists so the terminal has something to log into, and there is no
+# USER directive because sshd needs root to open login sessions for `sailor`.
+# Neither is a pattern to copy into a real deployment.
 RUN useradd --create-home --shell /bin/bash sailor \
     && echo 'sailor:signalk' | chpasswd
 

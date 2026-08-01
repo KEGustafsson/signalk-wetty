@@ -46,6 +46,13 @@ test('the webapp is self-contained', () => {
   assert.equal(/@import\s+url\(/.test(html), false)
 })
 
+test('the rebuild is polled rather than awaited on one long request', () => {
+  // Compiling node-pty takes minutes; a proxy in front of the admin UI would
+  // cut off a held response and report a failure for a healthy build.
+  assert.match(html, /awaitRebuild/)
+  assert.match(html, /status\.rebuild\.running/)
+})
+
 test('every branch of the status payload has a rendering path', () => {
   for (const marker of [
     'renderTerminal',
