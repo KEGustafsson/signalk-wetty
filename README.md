@@ -170,7 +170,8 @@ WeTTY, so no plugin install script is needed.
 
 Run the **Native node-pty prebuilds** GitHub Actions workflow to build those
 files on native Linux x64 and arm64 runners and commit them back into the
-repository.
+repository. The same workflow also publishes a GitHub Packages npm package as
+`@kegustafsson/signalk-wetty`.
 
 The Signal K app store installs plugins with `npm install --ignore-scripts`,
 which skips that compile step. The plugin therefore:
