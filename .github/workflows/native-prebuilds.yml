@@ -70,8 +70,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          registry-url: https://npm.pkg.github.com
-          scope: '@kegustafsson'
 
       - name: Download linux-x64 prebuild
         uses: actions/download-artifact@v4
@@ -84,6 +82,9 @@ jobs:
         with:
           name: node-pty-linux-arm64
           path: native-prebuilds/linux-arm64
+
+      - name: Install dependencies
+        run: npm ci --include=optional
 
       - name: Commit prebuilds
         run: |
@@ -101,6 +102,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "@kegustafsson:registry=https://npm.pkg.github.com" > .npmrc
+          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> .npmrc
           npm pkg set name=@kegustafsson/signalk-wetty
           npm pkg set publishConfig.registry=https://npm.pkg.github.com
           npm publish --access public
