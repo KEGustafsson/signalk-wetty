@@ -53,14 +53,19 @@ test('wetty is optional so an app store install is never left broken', () => {
   assert.ok(pkg.optionalDependencies.wetty)
 })
 
-test('the app store icon is WeTTYs own', () => {
-  // Copied from the wetty package rather than drawn here, so the entry is
-  // recognisable as WeTTY in the app store and the admin UI webapp list.
-  assert.equal(pkg.signalk.appIcon, './public/wetty-icon.svg')
-  const icon = fs.readFileSync(path.join(ROOT, 'public/wetty-icon.svg'), 'utf8')
-  assert.match(icon, /butlerx\/wetty/, 'the icon must keep its attribution')
-  assert.match(icon, /MIT/)
-  assert.match(icon, /<svg[^>]*viewBox="0 0 512 512"/)
+test('the app store icon is a self-contained SVG', () => {
+  // The app store serves the icon from a CDN, so it must not pull in a font,
+  // a stylesheet or a remote image that would fail to load there.
+  assert.equal(pkg.signalk.appIcon, './public/app-icon.svg')
+  const icon = fs.readFileSync(path.join(ROOT, 'public/app-icon.svg'), 'utf8')
+  assert.match(icon, /<svg[^>]*viewBox="0 0 128 128"/)
+  // The xmlns declaration is a namespace name, not something the renderer
+  // fetches, so only real references are checked here.
+  assert.equal(/<image\b|@import|url\(\s*['"]?https?:/.test(icon), false)
+  assert.equal(/(?:xlink:)?href\s*=\s*['"]https?:/.test(icon), false)
+  // Pure shapes, no <text>: the icon has to stay readable at 16px in a browser
+  // tab and on a compact app store card, where lettering turns to mush.
+  assert.equal(/<text\b/.test(icon), false)
 })
 
 test('declared app store assets exist on disk', () => {

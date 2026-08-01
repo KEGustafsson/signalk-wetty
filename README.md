@@ -287,8 +287,3 @@ runs can additionally enable the armv7 (Cerbo GX) matrix.
 
 MIT — see [LICENSE](LICENSE). WeTTY is MIT licensed and remains the copyright of
 its authors.
-
-`public/wetty-icon.svg` is WeTTY's own icon, copied unmodified from
-[wetty@3.2.0](https://github.com/butlerx/wetty) (`build/client/wetty.svg`, its
-web manifest icon) so the plugin is recognisable as WeTTY in the app store and
-the admin UI. It is MIT licensed and remains the copyright of the WeTTY authors.
