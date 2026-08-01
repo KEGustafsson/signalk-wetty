@@ -67,15 +67,30 @@ test('a rebuild always settles, timeout or not', async () => {
   // Runs in an empty temp directory so npm cannot touch this repo's
   // node_modules. Whether npm finishes first or the timeout kills it, the
   // promise must settle: if it did not, the request that started the rebuild
-  // would hang until the client gave up.
+  // would hang until the client gave up, and this test would time out.
   const fs = require('node:fs')
   const os = require('node:os')
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wetty-rebuild-'))
+  const started = Date.now()
   try {
     const result = await rebuildNodePty({ available: false, projectDir }, 250)
     assert.equal(typeof result.ok, 'boolean')
     assert.equal(typeof result.output, 'string')
+    assert.ok(Date.now() - started < 60000, 'the rebuild should have settled')
   } finally {
-    fs.rmSync(projectDir, { recursive: true, force: true })
+    // Best effort. On Windows the kill reaches only the shell wrapper — the
+    // very behaviour this test exists for — so npm can outlive it and keep the
+    // directory locked. A stray directory under the OS temp root is not worth
+    // failing a run over.
+    try {
+      fs.rmSync(projectDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 200
+      })
+    } catch {
+      // Left for the OS to reap.
+    }
   }
 })
