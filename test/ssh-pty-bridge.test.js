@@ -392,13 +392,11 @@ test('a wrong interactive password gets retried instead of ending the session', 
 
     // Before the retry fix, one wrong guess ended the session immediately
     // — no further prompt, no feedback, exactly the "blank screen, nothing"
-    // symptom this test guards against. Waits for a second, distinct
-    // prompt rather than just "Permission denied" reappearing: the very
-    // first keyboard-interactive attempt is rejected by the test server
-    // before any guess is ever sent, so that text (and the first real
-    // prompt) are both already present before 'wrong-guess' is even
-    // written — answering on that alone would race ahead of the retry
-    // prompt actually being armed.
+    // symptom this test guards against. Waits for a second, distinct prompt
+    // rather than just "Permission denied" reappearing, since the fix below
+    // means that text only shows up once, after this real wrong guess —
+    // answering on it alone would race ahead of the retry prompt actually
+    // being armed.
     await waitFor(() => promptCount() > 1)
     assert.equal(
       exits.length,
@@ -409,6 +407,36 @@ test('a wrong interactive password gets retried instead of ending the session', 
     session.write('letmein\r')
     await waitFor(() => chunks.join('').includes('ready'))
     assert.equal(exits.length, 0)
+
+    session.kill()
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+test('no "Permission denied" before the very first password prompt', async () => {
+  // This test server (like a plain local sshd/PAM stack) rejects the
+  // client's opening keyboard-interactive attempt outright, with no info
+  // request and so no chance for the user to answer it — that rejection is
+  // not something the user could have avoided, and must never be reported
+  // as a wrong password before they have typed anything at all.
+  const server = await startTestSshServer()
+  try {
+    const { port } = server.address()
+    const sshConfig = {
+      ...resolveOptions({ ssh: { auth: 'password', password: '' } }).ssh,
+      port
+    }
+
+    const chunks = []
+    const session = spawnSshPty(sshConfig, ['--', 'tester@127.0.0.1'], {
+      cols: 80,
+      rows: 24
+    })
+    session.onData((data) => chunks.push(data))
+
+    await waitFor(() => chunks.join('').includes("'s password: "))
+    assert.doesNotMatch(chunks.join(''), /Permission denied/)
 
     session.kill()
   } finally {

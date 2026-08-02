@@ -312,6 +312,14 @@ export const spawnSshPty = (
     }
   }
 
+  // Many PAM stacks (this is what a plain local `sshd` commonly does) open
+  // keyboard-interactive with one round that carries zero prompts before the
+  // real password prompt — a handshake step, not a login attempt. The user
+  // is shown nothing and gets no chance to answer it, so its rejection must
+  // never be reported as a wrong password; only set once a round has
+  // actually asked the user something.
+  let submittedRealAnswer = false
+
   conn.on(
     'keyboard-interactive',
     (_name, _instructions, _lang, prompts: Prompt[], finish) => {
@@ -319,6 +327,9 @@ export const spawnSshPty = (
         const answers: string[] = []
         for (const prompt of prompts) {
           answers.push(await askInteractively(prompt.prompt))
+        }
+        if (prompts.length > 0) {
+          submittedRealAnswer = true
         }
         finish(answers)
       })()
@@ -384,7 +395,7 @@ export const spawnSshPty = (
         planIndex += 1
         continue
       }
-      if (interactiveAttempts > 0) {
+      if (submittedRealAnswer) {
         emitData('Permission denied, please try again.\r\n')
       }
       if (authsLeft === null || authsLeft.includes('keyboard-interactive')) {
@@ -396,6 +407,7 @@ export const spawnSshPty = (
         interactiveAttempts += 1
         askInteractively(`${target.username}@${target.host}'s password: `).then(
           (password) => {
+            submittedRealAnswer = true
             next({ type: 'password', username: target.username, password })
           }
         )

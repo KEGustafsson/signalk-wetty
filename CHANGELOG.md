@@ -14,6 +14,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Signal K server console on every such session, even with the WeTTY log
   level set to "silent". It is now routed through the plugin's debug log like
   every other WeTTY log line (see `src/login-console-patch.ts`).
+- The built-in SSH client showed a spurious `Permission denied, please try
+  again.` before the very first password prompt on every connection. Local
+  PAM-backed SSH servers commonly open keyboard-interactive authentication
+  with one round that carries no prompts at all — a handshake step, not a
+  login attempt — and that round's rejection was being reported as a wrong
+  password the user never had a chance to type. The message now only appears
+  once a real, user-submitted answer has actually been rejected (see
+  `src/ssh-pty-bridge.ts`).
 
 ## [0.1.1] - 2026-08-02
 
