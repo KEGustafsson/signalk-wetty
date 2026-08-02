@@ -149,16 +149,50 @@ test('plugin options are mapped onto WeTTY configuration', async () => {
 test('the configured log level is applied to WeTTYs logger', async () => {
   const { plugin, fake } = withFakeWetty()
   await plugin.start({ logLevel: 'debug' })
-  assert.deepEqual(fake.state.transports, [{ level: 'debug', silent: false }])
+  const [transport] = fake.state.transports
+  assert.equal(transport.level, 'debug')
+  assert.equal(transport.silent, false)
   await plugin.stop()
 })
 
-test('WeTTY logs nothing to the server console by default', async () => {
-  const { plugin, fake } = withFakeWetty()
+test('WeTTYs own logging is reported through the plugins debug log', async () => {
+  const { plugin, app, fake } = withFakeWetty()
   await plugin.start({})
-  // Silenced rather than levelled down, and the level is left untouched so a
-  // silent transport cannot fall back to the logger's own default level.
-  assert.deepEqual(fake.state.transports, [{ level: 'http', silent: true }])
+  // What WeTTY would have printed to the console it inherits from the Signal K
+  // server: it reaches app.debug() instead, which the server gates per plugin.
+  fake.emitLog({ level: 'info', message: 'Server started' })
+  assert.ok(
+    app.calls.debug.includes('WeTTY info: Server started'),
+    `expected the WeTTY log line in ${JSON.stringify(app.calls.debug)}`
+  )
+  await plugin.stop()
+})
+
+test('a log record winston has already formatted is reported verbatim', async () => {
+  const { plugin, app, fake } = withFakeWetty()
+  await plugin.start({})
+  const formatted =
+    '{"label":"Wetty","level":"info","message":"Server started"}'
+  fake.emitLog({
+    level: 'info',
+    message: 'Server started',
+    [Symbol.for('message')]: formatted
+  })
+  assert.ok(
+    app.calls.debug.includes(formatted),
+    `expected the formatted line in ${JSON.stringify(app.calls.debug)}`
+  )
+  await plugin.stop()
+})
+
+test('silent drops WeTTYs logging instead of reporting it', async () => {
+  const { plugin, fake } = withFakeWetty()
+  await plugin.start({ logLevel: 'silent' })
+  // Silenced rather than levelled down: the level is left untouched so a silent
+  // transport cannot fall back to the logger's own default level.
+  const [transport] = fake.state.transports
+  assert.equal(transport.silent, true)
+  assert.equal(transport.level, 'http')
   await plugin.stop()
 })
 

@@ -16,8 +16,9 @@ export type ConnectionMode = 'ssh' | 'local'
 
 /**
  * WeTTY's own winston levels, plus `silent` — which is not a winston level but
- * a transport flag, and is how the plugin keeps WeTTY out of the Signal K
- * server console entirely. See applyLogLevel() in src/wetty-runner.ts.
+ * a transport flag, and drops WeTTY's logging entirely rather than reporting
+ * it. Everything else is reported through the plugin's own debug logging; see
+ * routeLoggingToDebug() in src/wetty-runner.ts.
  */
 export type LogLevel =
   'silent' | 'error' | 'warn' | 'info' | 'http' | 'verbose' | 'debug' | 'silly'
@@ -80,11 +81,11 @@ export const DEFAULTS: ResolvedOptions = {
   host: '127.0.0.1',
   title: 'Signal K Terminal',
   allowIframe: true,
-  // WeTTY logs every connection, disconnection and asset request straight to
-  // the console it inherits — which is the Signal K server log. Silent by
-  // default so a plugin nobody is debugging stays out of it; the plugin's own
-  // diagnostics go through app.debug() and are enabled per plugin instead.
-  logLevel: 'silent',
+  // WeTTY would otherwise log every connection, disconnection and asset
+  // request straight to the console it inherits — which is the Signal K server
+  // log. Its output is reported through the plugin's debug logging instead, so
+  // this level only decides how much shows up once debug is switched on.
+  logLevel: 'info',
   mode: 'ssh',
   command: 'login',
   ssh: {
@@ -246,7 +247,7 @@ export const PLUGIN_SCHEMA: JsonSchema = {
       type: 'string',
       title: 'WeTTY log level',
       description:
-        'How much WeTTY writes to the Signal K server log. "silent" writes nothing; any other level logs connections and requests to the server console.',
+        'How much of WeTTY\'s own logging is reported through this plugin\'s debug log, which is enabled under Server → Server Log. "silent" drops it entirely. WeTTY never writes to the server console directly.',
       enum: LOG_LEVELS,
       default: DEFAULTS.logLevel
     },

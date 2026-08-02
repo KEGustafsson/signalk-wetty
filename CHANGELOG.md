@@ -41,13 +41,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- WeTTY no longer writes to the Signal K server console. `WeTTY log level`
-  gained a `silent` option and now defaults to it, so a plugin nobody is
-  debugging stops logging every connection, disconnection and asset request
-  into the server log. The level is also applied before WeTTY starts rather
-  than after, so its own startup logging is suppressed too. Set any other
-  level to get the old output back; the plugin's own diagnostics are
-  unaffected and still go through `app.debug()`.
+- WeTTY no longer writes to the Signal K server console. Its winston console
+  transport is redirected into the plugin's own `app.debug()`, which the
+  server gates per plugin, so every connection, disconnection and asset
+  request WeTTY logs is reported with the plugin's other debug output instead
+  of unconditionally in the server log. The redirect is installed before
+  WeTTY starts rather than after, so its own startup logging goes the same
+  way. `WeTTY log level` still decides how much of it is reported and gained
+  a `silent` option that drops it entirely.
 - `Bind address` defaults to `127.0.0.1` (was `0.0.0.0`): the terminal is
   reachable through the embedded webapp regardless of this setting, so the
   direct port no longer needs to be exposed by default.
