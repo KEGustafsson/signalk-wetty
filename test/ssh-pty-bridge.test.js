@@ -2,9 +2,11 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const { execFileSync } = require('node:child_process')
+const path = require('node:path')
 const ssh2 = require('ssh2')
 
-const { load } = require('./helpers/harness')
+const { load, DIST } = require('./helpers/harness')
 
 const { resolveOptions } = load('config.js')
 const { looksLikeSshSpawn, parseSshTarget, spawnSshPty, installSshPtyPatch } =
@@ -83,6 +85,32 @@ test('parseSshTarget returns undefined for argv that does not fit the convention
   assert.equal(parseSshTarget([]), undefined)
 })
 
+test('loading ssh-pty-bridge does not eagerly require ssh2', () => {
+  // ssh-pty-bridge.js is reached through an unconditional import chain
+  // (index.js -> wetty-runner.js -> here), so a top-level `require('ssh2')`
+  // would make requiring the plugin's own entry point fail whenever ssh2
+  // is not installed, in every connection mode. ssh2 must only be resolved
+  // once an actual SSH spawn happens. Checked in a fresh child process,
+  // rather than in-process, because this test file's own `require('ssh2')`
+  // above (for the fake SSH server used below) would otherwise contaminate
+  // an in-process require.cache check.
+  const modulePath = path.join(DIST, 'ssh-pty-bridge.js')
+  const script = `
+    require(${JSON.stringify(modulePath)});
+    const sep = require('node:path').sep;
+    const loaded = Object.keys(require.cache).some((p) => p.includes(sep + 'ssh2' + sep));
+    process.stdout.write(String(loaded));
+  `
+  const output = execFileSync(process.execPath, ['-e', script], {
+    encoding: 'utf8'
+  })
+  assert.equal(
+    output,
+    'false',
+    'ssh2 must not be loaded merely from requiring ssh-pty-bridge.js'
+  )
+})
+
 test('installSshPtyPatch replaces spawn and the remover restores it', () => {
   const original = (file, args) => ({ tag: 'real-node-pty', file, args })
   const fakeModule = { spawn: original }
@@ -131,10 +159,12 @@ const startTestSshServer = () =>
   new Promise((resolve) => {
     const hostKey = ssh2.utils.generateKeyPairSync('ed25519')
     const windowChanges = []
+    const authAttempts = []
     const server = new ssh2.Server(
       { hostKeys: [hostKey.private] },
       (client) => {
         client.on('authentication', (ctx) => {
+          authAttempts.push(ctx.method)
           if (ctx.method === 'password' && ctx.password === 'letmein') {
             ctx.accept()
             return
@@ -167,6 +197,7 @@ const startTestSshServer = () =>
       }
     )
     server.windowChanges = windowChanges
+    server.authAttempts = authAttempts
     server.listen(0, '127.0.0.1', () => resolve(server))
   })
 
@@ -238,6 +269,77 @@ test('spawnSshPty reports a clean exit when authentication fails', async () => {
 
   await waitFor(() => exits.length > 0, 5000)
   assert.equal(exits[0].exitCode, 1)
+
+  await new Promise((resolve) => server.close(resolve))
+})
+
+test('auth methods are attempted in the configured order, not publickey-first', async () => {
+  const server = await startTestSshServer()
+  const { port } = server.address()
+  // A syntactically valid key the test server will never accept, so a
+  // publickey attempt is observable without ever succeeding via it.
+  const throwawayKey = ssh2.utils.generateKeyPairSync('ed25519')
+  const keyPath = require('node:path').join(
+    require('node:os').tmpdir(),
+    `signalk-wetty-test-key-${Date.now()}`
+  )
+  require('node:fs').writeFileSync(keyPath, throwawayKey.private)
+
+  try {
+    const sshConfig = {
+      ...resolveOptions({
+        ssh: { auth: 'password,publickey', password: 'letmein', keyPath }
+      }).ssh,
+      port
+    }
+
+    const chunks = []
+    const session = spawnSshPty(sshConfig, ['--', 'tester@127.0.0.1'], {
+      cols: 80,
+      rows: 24
+    })
+    session.onData((data) => chunks.push(data))
+
+    await waitFor(() => chunks.join('').includes('ready'))
+    // auth: 'password,publickey' lists password first, so that must be
+    // what the server sees attempted first, regardless of which auth
+    // action buildAuthPlan happens to build internally.
+    assert.equal(server.authAttempts[0], 'password')
+
+    session.kill()
+  } finally {
+    require('node:fs').unlinkSync(keyPath)
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+test('Ctrl-C at an interactive password prompt still ends the session', async () => {
+  const server = await startTestSshServer()
+  const { port } = server.address()
+  // No password configured, so spawnSshPty falls back to prompting for one
+  // in the terminal itself instead of ever reaching the server with a
+  // 'password' attempt.
+  const sshConfig = {
+    ...resolveOptions({ ssh: { auth: 'password', password: '' } }).ssh,
+    port
+  }
+
+  const chunks = []
+  const exits = []
+  const session = spawnSshPty(sshConfig, ['--', 'tester@127.0.0.1'], {
+    cols: 80,
+    rows: 24
+  })
+  session.onData((data) => chunks.push(data))
+  session.onExit((e) => exits.push(e))
+
+  await waitFor(() => chunks.join('').includes('password'))
+  session.write('\x03') // Ctrl-C
+
+  // Before the connection-level `close` handler, this hung forever: the
+  // password prompt's `conn.end()` neither opened a channel nor raised an
+  // `error`, so onExit never fired.
+  await waitFor(() => exits.length > 0, 2000)
 
   await new Promise((resolve) => server.close(resolve))
 })

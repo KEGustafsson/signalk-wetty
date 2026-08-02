@@ -1,5 +1,4 @@
 import fs from 'node:fs'
-import { Client } from 'ssh2'
 import type {
   AuthenticationType,
   AuthHandlerMiddleware,
@@ -18,6 +17,18 @@ import { resolutionPaths } from './native'
  * the rest of WeTTY (asset serving, the socket.io protocol, xterm.js, CSP,
  * metrics) keeps working completely unmodified — see installSshPtyPatch().
  */
+
+/**
+ * `ssh2` is loaded lazily, on the first actual SSH spawn, rather than
+ * imported at module top. This file is reached through an unconditional
+ * import chain — index.ts -> wetty-runner.ts -> here — so a static `ssh2`
+ * import would make requiring the plugin's own entry point fail whenever
+ * `ssh2` is not installed, in every connection mode, before start() (or its
+ * own error handling) ever runs. Mirrors how `wetty` itself is only ever
+ * dynamically imported inside WettyRunner.start().
+ */
+const loadSsh2 = (): typeof import('ssh2') =>
+  require('ssh2') as typeof import('ssh2')
 
 export interface IDisposable {
   dispose: () => void
@@ -151,13 +162,17 @@ const buildAuthPlan = (sshConfig: WettySshOptions): AuthAction[] => {
     .map((method) => method.trim())
     .filter(Boolean)
   const plan: AuthAction[] = []
-  if (preferred.includes('publickey') && sshConfig.keyPath !== '') {
-    plan.push({ type: 'publickey' })
-  }
-  if (preferred.includes('password')) {
-    plan.push(
-      sshConfig.password !== '' ? { type: 'password' } : { type: 'interactive' }
-    )
+  for (const method of preferred) {
+    if (method === 'publickey' && sshConfig.keyPath !== '') {
+      plan.push({ type: 'publickey' })
+    }
+    if (method === 'password') {
+      plan.push(
+        sshConfig.password !== ''
+          ? { type: 'password' }
+          : { type: 'interactive' }
+      )
+    }
   }
   return plan
 }
@@ -236,6 +251,7 @@ export const spawnSshPty = (
     }
   }
 
+  const { Client } = loadSsh2()
   const conn = new Client()
   let channel: ClientChannel | undefined
   let killedBeforeReady = false
@@ -400,6 +416,18 @@ export const spawnSshPty = (
 
   conn.on('error', (err) => {
     emitData(`${err.message}\r\n`)
+    emitExit(1)
+  })
+
+  // Covers every quiet close `error` doesn't: Ctrl-C at the password prompt
+  // and kill() before the channel opened both end the connection without an
+  // error or an open channel, which otherwise left onExit never firing and
+  // WeTTY's session (and its socket.io listeners) hanging forever. emitExit
+  // is idempotent, so a channel close that already reported a real exit
+  // code still wins over this fallback.
+  conn.on('close', () => {
+    awaitingPrompt?.('')
+    awaitingPrompt = undefined
     emitExit(1)
   })
 
