@@ -49,7 +49,8 @@ export const sshClientHelpText = (probe: SshClientProbe): string => {
   }
   return [
     'The terminal needs an SSH client to connect, and none is installed on this machine.',
-    'Install one: "apt install openssh-client" (Debian, Ubuntu, Raspberry Pi OS),',
+    'Install one inside the Signal K machine or container: "sudo apt update && sudo apt install -y openssh-client" (Debian, Ubuntu, Raspberry Pi OS),',
+    '"apt update && apt install -y openssh-client" in a container running as root without sudo,',
     '"apk add openssh-client" (Alpine), or the equivalent for this system.',
     'The terminal page will still load, but every session will fail until this is fixed.'
   ].join(' ')

@@ -38,7 +38,7 @@ interface SpawnCommand {
 }
 
 const MODULE_NOT_FOUND = new Set(['MODULE_NOT_FOUND', 'ERR_MODULE_NOT_FOUND'])
-const SUPPORTED_PREBUILD_ARCHES = new Set(['arm64', 'x64'])
+const SUPPORTED_PREBUILD_ARCHES = new Set(['arm', 'arm64', 'x64'])
 
 const errorMessage = (err: unknown): string =>
   err instanceof Error ? err.message : String(err)

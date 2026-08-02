@@ -234,7 +234,7 @@ function signalkWetty(
     ].filter((problem): problem is string => Boolean(problem))
     if (problems.length > 0) {
       setError(
-        `${describeRunning()} — but ${problems.join('; ')}. Open the WeTTY Terminal webapp for how to fix this.`
+        `${describeRunning()} — but ${problems.join('; ')}. The WeTTY Terminal webapp stays open and shows the fix instructions above the terminal.`
       )
     } else {
       setStatus(describeRunning())

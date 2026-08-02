@@ -6,6 +6,12 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const { load } = require('./helpers/harness')
+const {
+  loadWebapp,
+  runningStatus,
+  find,
+  textOf
+} = require('./helpers/webapp-dom')
 
 const { PLUGIN_ID } = load('config.js')
 
@@ -74,4 +80,82 @@ test('every branch of the status payload has a rendering path', () => {
   ]) {
     assert.ok(html.includes(marker), `webapp does not handle ${marker}`)
   }
+})
+
+test('a running terminal still renders when status contains an SSH warning', async () => {
+  // Missing ssh/sshd is a session problem, not a reason to replace the running
+  // terminal with the generic unavailable screen.
+  const { root, settle } = loadWebapp({
+    status: runningStatus({
+      error: 'ssh: connect to host localhost port 22: Connection refused',
+      ssh: {
+        checked: true,
+        reachable: false,
+        error: 'Connection refused',
+        help: 'sudo apt install -y openssh-server'
+      }
+    })
+  })
+  await settle()
+
+  const iframe = find(root, 'iframe')
+  assert.ok(iframe, 'the running terminal was replaced instead of kept')
+  assert.equal(iframe.src, `/plugins/${PLUGIN_ID}/terminal/`)
+
+  const text = textOf(root)
+  assert.match(text, /No SSH server/)
+  assert.match(text, /openssh-server/)
+  assert.doesNotMatch(text, /Terminal unavailable/)
+})
+
+test('a running terminal still renders when the SSH client is missing', async () => {
+  const { root, settle } = loadWebapp({
+    status: runningStatus({
+      sshClient: {
+        available: false,
+        error: 'ssh: command not found',
+        help: 'apt update && apt install -y openssh-client'
+      }
+    })
+  })
+  await settle()
+
+  assert.ok(
+    find(root, 'iframe'),
+    'the running terminal was replaced instead of kept'
+  )
+  const text = textOf(root)
+  assert.match(text, /No SSH client/)
+  assert.match(text, /openssh-client/)
+  assert.doesNotMatch(text, /Terminal unavailable/)
+})
+
+test('a terminal that is not running renders the unavailable screen', async () => {
+  // The other side of the same branch: without this, a renderTerminal() that
+  // ignored `running` would still satisfy the tests above.
+  const { root, settle } = loadWebapp({
+    status: runningStatus({
+      running: false,
+      error: 'WeTTY failed to start',
+      native: { available: true, help: '' }
+    })
+  })
+  await settle()
+
+  assert.equal(find(root, 'iframe'), null)
+  assert.match(textOf(root), /Terminal unavailable/)
+  assert.match(textOf(root), /WeTTY failed to start/)
+})
+
+test('embedding disabled offers a link instead of the terminal frame', async () => {
+  const { root, settle } = loadWebapp({
+    status: runningStatus({ allowIframe: false })
+  })
+  await settle()
+
+  assert.equal(find(root, 'iframe'), null)
+  const link = find(root, 'a')
+  assert.ok(link, 'no link to open the terminal')
+  assert.equal(link.href, `/plugins/${PLUGIN_ID}/terminal/`)
+  assert.match(textOf(root), /Terminal ready/)
 })

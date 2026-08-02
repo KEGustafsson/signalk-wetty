@@ -44,5 +44,9 @@ test('sshClientHelpText explains how to install one when missing', () => {
     error: 'ssh: command not found'
   })
   assert.match(help, /openssh-client/)
-  assert.match(help, /apt install/)
+  assert.match(help, /sudo apt update && sudo apt install -y openssh-client/)
+  assert.match(help, /container/)
+  // Minimal images are exactly where ssh is missing, and they routinely run as
+  // root with no sudo installed, so the sudo command alone is not actionable.
+  assert.match(help, /(?<!sudo )apt update && apt install -y openssh-client/)
 })
