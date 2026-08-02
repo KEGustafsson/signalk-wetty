@@ -127,7 +127,8 @@ npm run build:node-pty-prebuild
 The result is written to `native-prebuilds/linux-<architecture>/pty.node`. The
 **Native node-pty prebuilds** GitHub Actions workflow builds Linux x64 and
 arm64 binaries and commits them to the repository; it does not publish a
-package.
+package. There is no hosted 32-bit ARM runner, so a `linux-arm` binary has to
+be built on an arm host with the commands above and committed by hand.
 
 ## Security
 
@@ -139,6 +140,13 @@ Leave the SSH password and private key fields empty unless access is protected
 by another trusted network boundary. Saved passwords are stored in plugin
 configuration, and configured credentials can create passwordless shell access
 for anyone who can reach a directly exposed terminal port.
+
+Keep **Allow host/port in the URL** and **Allow command/path in the URL**
+disabled, which is the default, whenever the bind address is not `127.0.0.1`.
+They let the browser URL choose the SSH `host` and `port`, and the `command` and
+`path` run after login, so on a directly exposed terminal port anyone who can
+reach it picks both the destination and the command — using the credentials
+configured here.
 
 For remote SSH hosts, configure a real `known_hosts` file instead of the default
 `/dev/null`.
