@@ -327,7 +327,13 @@ export const spawnSshPty = (
 
   const authPlan = buildAuthPlan(sshConfig)
   let planIndex = 0
-  let triedKeyboardInteractive = false
+  let interactiveAttempts = 0
+  // Matches `ssh`'s own client-side NumberOfPasswordPrompts default: a
+  // server offering keyboard-interactive-via-PAM commonly never lists the
+  // literal 'password' method at all, so without a client-side cap a wrong
+  // guess had nothing else to fall back to and gave up after exactly one
+  // attempt — silently, with no "wrong password" feedback shown.
+  const MAX_INTERACTIVE_ATTEMPTS = 3
 
   const authHandler: AuthHandlerMiddleware = (
     authsLeftRaw,
@@ -368,19 +374,26 @@ export const spawnSshPty = (
         })
         return
       }
-      // action.type === 'interactive': try keyboard-interactive once, then
-      // fall back to a manually-prompted password if the server only offers
-      // the plain 'password' method.
-      if (
-        !triedKeyboardInteractive &&
-        (authsLeft === null || authsLeft.includes('keyboard-interactive'))
-      ) {
-        triedKeyboardInteractive = true
+      // action.type === 'interactive': keep retrying — preferring
+      // keyboard-interactive, falling back to a manually-prompted password
+      // — for as long as the server keeps offering either, capped at
+      // MAX_INTERACTIVE_ATTEMPTS. Only gives up once neither is offered or
+      // the cap is hit, matching a real `ssh` session's multiple tries
+      // instead of ending after one guess.
+      if (interactiveAttempts >= MAX_INTERACTIVE_ATTEMPTS) {
+        planIndex += 1
+        continue
+      }
+      if (interactiveAttempts > 0) {
+        emitData('Permission denied, please try again.\r\n')
+      }
+      if (authsLeft === null || authsLeft.includes('keyboard-interactive')) {
+        interactiveAttempts += 1
         next('keyboard-interactive')
         return
       }
-      if (authsLeft === null || authsLeft.includes('password')) {
-        planIndex += 1
+      if (authsLeft.includes('password')) {
+        interactiveAttempts += 1
         askInteractively(`${target.username}@${target.host}'s password: `).then(
           (password) => {
             next({ type: 'password', username: target.username, password })
@@ -464,6 +477,12 @@ export const spawnSshPty = (
     port: sshConfig.port,
     username: target.username,
     authHandler,
+    // ssh2 gates the string-shorthand `next('keyboard-interactive')` on
+    // this flag client-side, independently of the custom authHandler above:
+    // without it, every such call is silently self-rejected before ever
+    // reaching the server, `authsLeft` never narrows past its initial
+    // `null`, and the manual password fallback below is never reached.
+    tryKeyboard: true,
     readyTimeout: 20000,
     // A real `ssh` process has the same gap (no keepalive by default), so
     // this isn't fixing a regression — but an idle terminal behind a NAT or

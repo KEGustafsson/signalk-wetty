@@ -213,74 +213,85 @@ const waitFor = async (predicate, timeoutMs = 2000) => {
 
 test('spawnSshPty carries a real shell session over ssh2, no ssh binary involved', async () => {
   const server = await startTestSshServer()
-  const { port } = server.address()
-  const sshConfig = resolveOptions({
-    ssh: { auth: 'password', password: 'letmein', knownHosts: '/dev/null' }
-  }).ssh
+  try {
+    const { port } = server.address()
+    const sshConfig = resolveOptions({
+      ssh: { auth: 'password', password: 'letmein', knownHosts: '/dev/null' }
+    }).ssh
 
-  const chunks = []
-  const exits = []
-  // The target host/user comes from the argv (parseSshTarget); the port
-  // is not part of that convention, so it's carried on sshConfig instead —
-  // exactly like WeTTY's own sshOptions()/spawnSshPty split.
-  const config = { ...sshConfig, port }
-  const session = spawnSshPty(config, ['--', 'tester@127.0.0.1'], {
-    cols: 80,
-    rows: 24
-  })
-  session.onData((data) => chunks.push(data))
-  session.onExit((e) => exits.push(e))
+    const chunks = []
+    const exits = []
+    // The target host/user comes from the argv (parseSshTarget); the port
+    // is not part of that convention, so it's carried on sshConfig instead —
+    // exactly like WeTTY's own sshOptions()/spawnSshPty split.
+    const config = { ...sshConfig, port }
+    const session = spawnSshPty(config, ['--', 'tester@127.0.0.1'], {
+      cols: 80,
+      rows: 24
+    })
+    session.onData((data) => chunks.push(data))
+    session.onExit((e) => exits.push(e))
 
-  await waitFor(() => chunks.join('').includes('ready'))
+    await waitFor(() => chunks.join('').includes('ready'))
 
-  session.write('hello\r')
-  await waitFor(() => chunks.join('').includes('echo:hello'))
+    session.write('hello\r')
+    await waitFor(() => chunks.join('').includes('echo:hello'))
 
-  session.resize(120, 40)
-  await waitFor(() => server.windowChanges.length > 0)
-  assert.equal(server.windowChanges[0].cols, 120)
-  assert.equal(server.windowChanges[0].rows, 40)
+    session.resize(120, 40)
+    await waitFor(() => server.windowChanges.length > 0)
+    assert.equal(server.windowChanges[0].cols, 120)
+    assert.equal(server.windowChanges[0].rows, 40)
 
-  session.write('bye\r')
-  await waitFor(() => exits.length > 0)
-  assert.equal(exits[0].exitCode, 0)
+    session.write('bye\r')
+    await waitFor(() => exits.length > 0)
+    assert.equal(exits[0].exitCode, 0)
 
-  // Deterministic teardown: server.close() waits for open connections to
-  // end, and relying solely on the server-side stream.exit()/end() to bring
-  // the client down first is a race — kill the session explicitly instead
-  // of trusting it resolves before the test's own timeout does.
-  session.kill()
-  await new Promise((resolve) => server.close(resolve))
+    // Deterministic teardown: server.close() waits for open connections to
+    // end, and relying solely on the server-side stream.exit()/end() to
+    // bring the client down first is a race — kill the session explicitly
+    // instead of trusting it resolves before the test's own timeout does.
+    session.kill()
+  } finally {
+    // A try/finally around the whole test, not just the happy path: a
+    // thrown assertion or a timed-out waitFor otherwise skips this and
+    // leaves the server listening and the ssh2 connection open, which
+    // keeps the process alive long after node:test has already reported
+    // the failure — turning a fast, clear failure into an apparent hang.
+    await new Promise((resolve) => server.close(resolve))
+  }
 })
 
 test('spawnSshPty reports a clean exit when authentication fails', async () => {
   const server = await startTestSshServer()
-  const { port } = server.address()
-  const sshConfig = {
-    ...resolveOptions({
-      ssh: {
-        auth: 'password',
-        password: 'wrong-password',
-        knownHosts: '/dev/null'
-      }
-    }).ssh,
-    port
+  try {
+    const { port } = server.address()
+    const sshConfig = {
+      ...resolveOptions({
+        ssh: {
+          auth: 'password',
+          password: 'wrong-password',
+          knownHosts: '/dev/null'
+        }
+      }).ssh,
+      port
+    }
+
+    const chunks = []
+    const exits = []
+    const session = spawnSshPty(sshConfig, ['--', 'tester@127.0.0.1'], {
+      cols: 80,
+      rows: 24
+    })
+    session.onData((data) => chunks.push(data))
+    session.onExit((e) => exits.push(e))
+
+    await waitFor(() => exits.length > 0, 5000)
+    assert.equal(exits[0].exitCode, 1)
+
+    session.kill()
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
   }
-
-  const chunks = []
-  const exits = []
-  const session = spawnSshPty(sshConfig, ['--', 'tester@127.0.0.1'], {
-    cols: 80,
-    rows: 24
-  })
-  session.onData((data) => chunks.push(data))
-  session.onExit((e) => exits.push(e))
-
-  await waitFor(() => exits.length > 0, 5000)
-  assert.equal(exits[0].exitCode, 1)
-
-  session.kill()
-  await new Promise((resolve) => server.close(resolve))
 })
 
 test('auth methods are attempted in the configured order, not publickey-first', async () => {
@@ -325,31 +336,127 @@ test('auth methods are attempted in the configured order, not publickey-first', 
 
 test('Ctrl-C at an interactive password prompt still ends the session', async () => {
   const server = await startTestSshServer()
-  const { port } = server.address()
-  // No password configured, so spawnSshPty falls back to prompting for one
-  // in the terminal itself instead of ever reaching the server with a
-  // 'password' attempt.
-  const sshConfig = {
-    ...resolveOptions({ ssh: { auth: 'password', password: '' } }).ssh,
-    port
+  try {
+    const { port } = server.address()
+    // No password configured, so spawnSshPty falls back to prompting for
+    // one in the terminal itself instead of ever reaching the server with
+    // a 'password' attempt.
+    const sshConfig = {
+      ...resolveOptions({ ssh: { auth: 'password', password: '' } }).ssh,
+      port
+    }
+
+    const chunks = []
+    const exits = []
+    const session = spawnSshPty(sshConfig, ['--', 'tester@127.0.0.1'], {
+      cols: 80,
+      rows: 24
+    })
+    session.onData((data) => chunks.push(data))
+    session.onExit((e) => exits.push(e))
+
+    await waitFor(() => chunks.join('').includes('password'))
+    session.write('\x03') // Ctrl-C
+
+    // Before the connection-level `close` handler, this hung forever: the
+    // password prompt's `conn.end()` neither opened a channel nor raised
+    // an `error`, so onExit never fired.
+    await waitFor(() => exits.length > 0, 2000)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
   }
+})
 
-  const chunks = []
-  const exits = []
-  const session = spawnSshPty(sshConfig, ['--', 'tester@127.0.0.1'], {
-    cols: 80,
-    rows: 24
-  })
-  session.onData((data) => chunks.push(data))
-  session.onExit((e) => exits.push(e))
+test('a wrong interactive password gets retried instead of ending the session', async () => {
+  const server = await startTestSshServer()
+  try {
+    const { port } = server.address()
+    const sshConfig = {
+      ...resolveOptions({ ssh: { auth: 'password', password: '' } }).ssh,
+      port
+    }
 
-  await waitFor(() => chunks.join('').includes('password'))
-  session.write('\x03') // Ctrl-C
+    const chunks = []
+    const exits = []
+    const session = spawnSshPty(sshConfig, ['--', 'tester@127.0.0.1'], {
+      cols: 80,
+      rows: 24
+    })
+    session.onData((data) => chunks.push(data))
+    session.onExit((e) => exits.push(e))
+    const promptCount = () =>
+      (chunks.join('').match(/'s password: /g) || []).length
 
-  // Before the connection-level `close` handler, this hung forever: the
-  // password prompt's `conn.end()` neither opened a channel nor raised an
-  // `error`, so onExit never fired.
-  await waitFor(() => exits.length > 0, 2000)
+    await waitFor(() => promptCount() > 0)
+    session.write('wrong-guess\r')
 
-  await new Promise((resolve) => server.close(resolve))
+    // Before the retry fix, one wrong guess ended the session immediately
+    // — no further prompt, no feedback, exactly the "blank screen, nothing"
+    // symptom this test guards against. Waits for a second, distinct
+    // prompt rather than just "Permission denied" reappearing: the very
+    // first keyboard-interactive attempt is rejected by the test server
+    // before any guess is ever sent, so that text (and the first real
+    // prompt) are both already present before 'wrong-guess' is even
+    // written — answering on that alone would race ahead of the retry
+    // prompt actually being armed.
+    await waitFor(() => promptCount() > 1)
+    assert.equal(
+      exits.length,
+      0,
+      'a single wrong guess must not end the session'
+    )
+
+    session.write('letmein\r')
+    await waitFor(() => chunks.join('').includes('ready'))
+    assert.equal(exits.length, 0)
+
+    session.kill()
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+test('interactive auth gives up cleanly after repeated wrong passwords', async () => {
+  const server = await startTestSshServer()
+  try {
+    const { port } = server.address()
+    const sshConfig = {
+      ...resolveOptions({ ssh: { auth: 'password', password: '' } }).ssh,
+      port
+    }
+
+    const chunks = []
+    const exits = []
+    const session = spawnSshPty(sshConfig, ['--', 'tester@127.0.0.1'], {
+      cols: 80,
+      rows: 24
+    })
+    session.onData((data) => chunks.push(data))
+    session.onExit((e) => exits.push(e))
+    const deniedCount = () =>
+      (chunks.join('').match(/Permission denied/g) || []).length
+
+    await waitFor(() => /password/i.test(chunks.join('')))
+    session.write('wrong-1\r')
+
+    // Keep answering wrong until the session gives itself up, waiting for
+    // each fresh "Permission denied" retry prompt before sending the next
+    // guess — exercises the MAX_INTERACTIVE_ATTEMPTS cap without
+    // hardcoding its exact value or racing ahead of when the prompt is
+    // actually armed.
+    for (let i = 2; i <= 10 && exits.length === 0; i += 1) {
+      const before = deniedCount()
+      await waitFor(() => deniedCount() > before || exits.length > 0, 2000)
+      if (exits.length > 0) {
+        break
+      }
+      session.write(`wrong-${i}\r`)
+    }
+
+    await waitFor(() => exits.length > 0, 3000)
+    assert.equal(exits[0].exitCode, 1)
+    assert.ok(deniedCount() >= 1, 'at least one retry should have been offered')
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
 })
