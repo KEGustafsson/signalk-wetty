@@ -186,13 +186,21 @@ test('a log record winston has already formatted is reported verbatim', async ()
 })
 
 test('silent drops WeTTYs logging instead of reporting it', async () => {
-  const { plugin, fake } = withFakeWetty()
+  const { plugin, app, fake } = withFakeWetty()
   await plugin.start({ logLevel: 'silent' })
   // Silenced rather than levelled down: the level is left untouched so a silent
   // transport cannot fall back to the logger's own default level.
   const [transport] = fake.state.transports
   assert.equal(transport.silent, true)
   assert.equal(transport.level, 'http')
+
+  const before = app.calls.debug.length
+  fake.emitLog({ level: 'info', message: 'Server started' })
+  assert.equal(
+    app.calls.debug.length,
+    before,
+    'a silenced transport should report nothing'
+  )
   await plugin.stop()
 })
 

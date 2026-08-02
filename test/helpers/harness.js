@@ -37,6 +37,12 @@ const createFakeWetty = ({ failWith } = {}) => {
     /** Emits a log record the way winston hands one to a transport. */
     emitLog: (info) => {
       for (const transport of state.transports) {
+        // winston's TransportStream._write() returns before calling log() on a
+        // silent transport, so a fake that always calls it would report a
+        // silenced transport as still forwarding.
+        if (transport.silent) {
+          continue
+        }
         transport.log?.(info, () => {})
       }
     },
