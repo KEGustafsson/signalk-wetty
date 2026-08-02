@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- WeTTY's own username prompt (shown in `ssh` mode whenever no SSH user is
+  configured) reported its exit with a bare `console.error()` call, bypassing
+  the winston logger entirely — so `Process exited with code: 0` reached the
+  Signal K server console on every such session, even with the WeTTY log
+  level set to "silent". It is now routed through the plugin's debug log like
+  every other WeTTY log line (see `src/login-console-patch.ts`).
+
 ## [0.1.1] - 2026-08-02
 
 ### Added

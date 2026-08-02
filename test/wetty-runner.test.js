@@ -125,6 +125,66 @@ test('local mode never patches node-pty when it is actually reachable', async ()
   assert.equal(nodePty.spawn, original)
 })
 
+test('ssh mode patches console.error and stop() restores it', async () => {
+  const original = console.error
+  const fake = createFakeWetty()
+  const runner = new WettyRunner(async () => fake.module)
+
+  await runner.start(resolveOptions({ mode: 'ssh' }))
+  assert.notEqual(
+    console.error,
+    original,
+    'ssh mode should patch console.error against WeTTYs login-prompt leak'
+  )
+
+  await runner.stop()
+  assert.equal(
+    console.error,
+    original,
+    'stop() should restore the original console.error'
+  )
+})
+
+test('WeTTYs login-prompt exit message reaches the plugins debug log, not the console', async () => {
+  const fake = createFakeWetty()
+  const logged = []
+  const runner = new WettyRunner(
+    async () => fake.module,
+    (msg) => logged.push(msg)
+  )
+
+  await runner.start(resolveOptions({ mode: 'ssh' }))
+  // Simulates wetty/build/server/login.js's own bare console.error call once
+  // its username-prompt PTY exits — console.error is now the runner's patch.
+  console.error('Process exited with code: 0')
+  await runner.stop()
+
+  assert.deepEqual(logged, ['WeTTY Process exited with code: 0'])
+})
+
+test('local mode never patches console.error when it is actually reachable', async () => {
+  const original = console.error
+  const fake = createFakeWetty()
+  const runner = new WettyRunner(async () => fake.module)
+  const root = typeof process.getuid === 'function' && process.getuid() === 0
+
+  await runner.start(resolveOptions({ mode: 'local' }))
+  if (root) {
+    assert.equal(
+      console.error,
+      original,
+      'local mode never prompts for a username, so nothing should be patched'
+    )
+  } else {
+    // Not running as root, so the plugin falls back to ssh, which patches
+    // console.error exactly as an explicit ssh mode would.
+    assert.notEqual(console.error, original)
+  }
+
+  await runner.stop()
+  assert.equal(console.error, original)
+})
+
 test('a rejected loader still removes both patches instead of leaving node-pty patched', async () => {
   // this.loader() used to sit outside the try/catch that cleans up
   // installEnvVersionPatch()/installSshPtyPatch(), so a loader rejection —

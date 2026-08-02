@@ -3,6 +3,7 @@ import { EMBEDDED_TERMINAL_PATH, effectiveMode, resolveSsl } from './config'
 import type { PatchableHttpServer } from './csp-patch'
 import { installCspPatch } from './csp-patch'
 import { installEnvVersionPatch } from './env-version-patch'
+import { installLoginExitPatch } from './login-console-patch'
 import { resolutionPaths } from './native'
 import { installSshPtyPatch } from './ssh-pty-bridge'
 
@@ -251,6 +252,7 @@ export class WettyRunner {
   private startCount = 0
   private removeEnvVersionPatch: (() => void) | undefined
   private removeSshPtyPatch: (() => void) | undefined
+  private removeLoginExitPatch: (() => void) | undefined
 
   constructor(
     private readonly loader: WettyLoader = defaultLoader,
@@ -276,6 +278,14 @@ export class WettyRunner {
     this.removeSshPtyPatch =
       effectiveMode(options) === 'ssh'
         ? installSshPtyPatch(options.ssh)
+        : undefined
+
+    // Only ssh mode's username prompt ever hits this — local mode's own
+    // `login(1)` reports its exit through winston, not a bare console.error.
+    // See src/login-console-patch.ts.
+    this.removeLoginExitPatch =
+      effectiveMode(options) === 'ssh'
+        ? installLoginExitPatch(this.log)
         : undefined
 
     // this.loader() is inside this same try/catch: it rejects whenever
@@ -320,6 +330,8 @@ export class WettyRunner {
       this.removeEnvVersionPatch = undefined
       this.removeSshPtyPatch?.()
       this.removeSshPtyPatch = undefined
+      this.removeLoginExitPatch?.()
+      this.removeLoginExitPatch = undefined
       throw err
     }
     this.startCount += 1
@@ -372,6 +384,8 @@ export class WettyRunner {
     this.removeEnvVersionPatch = undefined
     this.removeSshPtyPatch?.()
     this.removeSshPtyPatch = undefined
+    this.removeLoginExitPatch?.()
+    this.removeLoginExitPatch = undefined
     if (!handle) {
       return
     }
