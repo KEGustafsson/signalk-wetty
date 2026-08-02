@@ -100,17 +100,25 @@ export const parseSshTarget = (args: string[]): ParsedSshTarget | undefined => {
 
 /**
  * Parses an OpenSSH `known_hosts` file into the raw host key blobs recorded
- * for `host`. Hashed hostnames (`|1|salt|hash`) are not supported — a niche
- * combination with this plugin's own strict-checking toggle, which most
- * setups leave disabled (the default `knownHosts` is `/dev/null`).
+ * for `host` — matching both the plain `host` form and the `[host]:port`
+ * form OpenSSH writes for a non-default port, since `ssh.port` is a
+ * configurable option here. Hashed hostnames (`|1|salt|hash`) are not
+ * supported — a niche combination with this plugin's own strict-checking
+ * toggle, which most setups leave disabled (the default `knownHosts` is
+ * `/dev/null`).
  */
-const knownHostKeysFor = (knownHostsPath: string, host: string): Buffer[] => {
+const knownHostKeysFor = (
+  knownHostsPath: string,
+  host: string,
+  port: number
+): Buffer[] => {
   let content: string
   try {
     content = fs.readFileSync(knownHostsPath, 'utf8')
   } catch {
     return []
   }
+  const accepted = new Set([host, `[${host}]:${port}`])
   const keys: Buffer[] = []
   for (const line of content.split('\n')) {
     const trimmed = line.trim()
@@ -118,14 +126,16 @@ const knownHostKeysFor = (knownHostsPath: string, host: string): Buffer[] => {
       continue
     }
     const [hostsField, , keyBase64] = trimmed.split(/\s+/)
-    if (!keyBase64 || !hostsField.split(',').includes(host)) {
+    if (
+      !keyBase64 ||
+      !hostsField.split(',').some((entry) => accepted.has(entry))
+    ) {
       continue
     }
-    try {
-      keys.push(Buffer.from(keyBase64, 'base64'))
-    } catch {
-      // Unparseable line — skip rather than fail the whole check over it.
-    }
+    // Buffer.from(..., 'base64') never throws — it silently drops invalid
+    // characters — so a malformed line just produces a key that never
+    // matches, which stays fail-closed without needing a try/catch here.
+    keys.push(Buffer.from(keyBase64, 'base64'))
   }
   return keys
 }
@@ -138,12 +148,13 @@ const knownHostKeysFor = (knownHostsPath: string, host: string): Buffer[] => {
  */
 const makeHostVerifier = (
   knownHosts: string,
-  host: string
+  host: string,
+  port: number
 ): ((key: Buffer) => boolean) | undefined => {
   if (knownHosts === '' || knownHosts === '/dev/null') {
     return undefined
   }
-  const trusted = knownHostKeysFor(knownHosts, host)
+  const trusted = knownHostKeysFor(knownHosts, host, port)
   return (key: Buffer) => trusted.some((entry) => entry.equals(key))
 }
 
@@ -328,12 +339,24 @@ export const spawnSshPty = (
       const action = authPlan[planIndex]
       if (action.type === 'publickey') {
         planIndex += 1
+        let key: Buffer
         try {
-          const key = fs.readFileSync(sshConfig.keyPath)
-          next({ type: 'publickey', username: target.username, key })
+          key = fs.readFileSync(sshConfig.keyPath)
         } catch {
           continue // Unreadable key file — fall through to the next plan step.
         }
+        if (loadSsh2().utils.parseKey(key) instanceof Error) {
+          // Most commonly an encrypted key: fs.readFileSync succeeds, so the
+          // catch above never runs, and ssh2 would otherwise fail this deep
+          // inside the handshake with a generic parse error the user can't
+          // act on. This plugin has no passphrase option — the `ssh` binary
+          // it replaced would have prompted for one interactively.
+          emitData(
+            `signalk-wetty: ${sshConfig.keyPath} could not be used as a private key (an encrypted key needs a passphrase, which is not supported)\r\n`
+          )
+          continue
+        }
+        next({ type: 'publickey', username: target.username, key })
         return
       }
       if (action.type === 'password') {
@@ -431,13 +454,23 @@ export const spawnSshPty = (
     emitExit(1)
   })
 
-  const hostVerifier = makeHostVerifier(sshConfig.knownHosts, target.host)
+  const hostVerifier = makeHostVerifier(
+    sshConfig.knownHosts,
+    target.host,
+    sshConfig.port
+  )
   const connectConfig: ConnectConfig = {
     host: target.host,
     port: sshConfig.port,
     username: target.username,
     authHandler,
     readyTimeout: 20000,
+    // A real `ssh` process has the same gap (no keepalive by default), so
+    // this isn't fixing a regression — but an idle terminal behind a NAT or
+    // stateful firewall can otherwise lose the TCP flow without either side
+    // noticing, and the session hangs until the browser is reloaded.
+    keepaliveInterval: 30000,
+    keepaliveCountMax: 3,
     ...(hostVerifier ? { hostVerifier } : {})
   }
   conn.connect(connectConfig)

@@ -245,6 +245,11 @@ test('spawnSshPty carries a real shell session over ssh2, no ssh binary involved
   await waitFor(() => exits.length > 0)
   assert.equal(exits[0].exitCode, 0)
 
+  // Deterministic teardown: server.close() waits for open connections to
+  // end, and relying solely on the server-side stream.exit()/end() to bring
+  // the client down first is a race — kill the session explicitly instead
+  // of trusting it resolves before the test's own timeout does.
+  session.kill()
   await new Promise((resolve) => server.close(resolve))
 })
 
@@ -253,7 +258,11 @@ test('spawnSshPty reports a clean exit when authentication fails', async () => {
   const { port } = server.address()
   const sshConfig = {
     ...resolveOptions({
-      ssh: { auth: 'password', password: 'wrong-password' }
+      ssh: {
+        auth: 'password',
+        password: 'wrong-password',
+        knownHosts: '/dev/null'
+      }
     }).ssh,
     port
   }
@@ -270,6 +279,7 @@ test('spawnSshPty reports a clean exit when authentication fails', async () => {
   await waitFor(() => exits.length > 0, 5000)
   assert.equal(exits[0].exitCode, 1)
 
+  session.kill()
   await new Promise((resolve) => server.close(resolve))
 })
 

@@ -278,24 +278,32 @@ export class WettyRunner {
         ? installSshPtyPatch(options.ssh)
         : undefined
 
-    const mod = await this.loader()
-
-    // Redirected before start() rather than after it: WeTTY logs its own
-    // startup through the same logger, so configuring it afterwards still lets
-    // those lines through to the Signal K server console.
-    routeLoggingToDebug(mod, options.logLevel, this.log)
-
-    const { ssh, server, forcessh } = toWettyConfig(options)
-    const ssl = resolveSsl(options)
-
-    // Only a restart can hit the duplicate-metric case, so the first start is
-    // left alone and keeps WeTTY's own `wetty_connections` gauge registered.
-    if (this.startCount > 0) {
-      clearPrometheusRegistry()
-    }
-
+    // this.loader() is inside this same try/catch: it rejects whenever
+    // wetty isn't installed (see src/index.ts's dedicated hint for that
+    // case), which previously threw before either patch above was ever
+    // removed — leaving node-pty patched for the rest of the process even
+    // though the runner never actually started.
+    let mod: WettyModule
+    let ssl: ReturnType<typeof resolveSsl>
     let handle: WettyHandle
     try {
+      mod = await this.loader()
+
+      // Redirected before start() rather than after it: WeTTY logs its own
+      // startup through the same logger, so configuring it afterwards still
+      // lets those lines through to the Signal K server console.
+      routeLoggingToDebug(mod, options.logLevel, this.log)
+
+      const { ssh, server, forcessh } = toWettyConfig(options)
+      ssl = resolveSsl(options)
+
+      // Only a restart can hit the duplicate-metric case, so the first start
+      // is left alone and keeps WeTTY's own `wetty_connections` gauge
+      // registered.
+      if (this.startCount > 0) {
+        clearPrometheusRegistry()
+      }
+
       try {
         handle = await mod.start(ssh, server, options.command, forcessh, ssl)
       } catch (err) {
