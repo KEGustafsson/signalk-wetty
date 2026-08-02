@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-02
+
 ### Added
 
 - Genuine Signal K webapp embedding, in the sense the admin UI actually uses:
@@ -122,6 +124,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   particularly on Windows where the child is a shell wrapper.
 - Text files are checked out with LF everywhere, so the format check passes on
   Windows CI runners.
+- Interactive SSH login (blank `SSH user`/password) could fail silently with
+  no prompt and no error: `ssh2` gates the built-in client's keyboard-interactive
+  attempt on a connection flag that was never set, so every attempt was
+  rejected locally before ever reaching the server. Also, a wrong password
+  ended the session immediately with no feedback; it now retries up to 3
+  times, like `ssh` itself, showing "Permission denied, please try again."
+  between attempts.
 
 ## [0.1.0] - 2026-08-01
 
@@ -145,5 +154,6 @@ Initial release.
 - Signal K plugin CI workflow, unit and live-server test suites, a local
   Docker integration environment and a `signalk-server` smoke test.
 
-[Unreleased]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/KEGustafsson/signalk-wetty/releases/tag/v0.1.0

@@ -38,7 +38,7 @@ npm install
 npm run build
 npm pack
 cd ~/.signalk
-npm install --save /path/to/signalk-wetty/signalk-wetty-0.1.0.tgz
+npm install --save /path/to/signalk-wetty/signalk-wetty-0.1.1.tgz
 ```
 
 Enable **WeTTY Terminal** under **Server > Plugin Config**, then open it from
