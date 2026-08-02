@@ -25,21 +25,8 @@ admin UI.
 ## Install
 
 Not published on the official Signal K app store — see
-[How it works](#how-it-works) for why. Install from GitHub Packages, next to
-your Signal K configuration:
-
-```sh
-cd ~/.signalk
-printf "@kegustafsson:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n" > .npmrc
-npm install @kegustafsson/signalk-wetty
-```
-
-The package is published at
-<https://github.com/KEGustafsson/signalk-wetty/pkgs/npm/signalk-wetty>.
-Set `GITHUB_TOKEN` to a GitHub token that can read packages for the
-`KEGustafsson` account before running the install command.
-
-Or, from a checkout of this repository, build and install a tarball directly:
+[How it works](#how-it-works) for why. From a checkout of this repository, build
+and install a tarball directly:
 
 ```sh
 npm install && npm run build && npm pack
@@ -240,15 +227,14 @@ WeTTY allocates PTYs through
 every Raspberry Pi, OpenPlotter and Venus OS install — it has to be compiled at
 install time.
 
-Published packages can include Linux x64, arm64 and armv7 `pty.node` prebuilds under
+The repository can include Linux x64, arm64 and armv7 `pty.node` prebuilds under
 `native-prebuilds/`. When one matches the host, the plugin copies it into
 `node-pty`'s expected `prebuilds/linux-*/pty.node` directory before loading
 WeTTY, so no plugin install script is needed.
 
 Run the **Native node-pty prebuilds** GitHub Actions workflow to build those
 files on native Linux x64 and arm64 runners and commit them back into the
-repository. The same workflow also publishes a GitHub Packages npm package as
-`@kegustafsson/signalk-wetty`.
+repository.
 
 The Signal K app store installs plugins with `npm install --ignore-scripts`,
 which skips that compile step. The plugin therefore:

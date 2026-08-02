@@ -2,7 +2,6 @@ name: Native node-pty prebuilds
 
 permissions:
   contents: write
-  packages: write
 
 on:
   workflow_dispatch:
@@ -58,7 +57,7 @@ jobs:
           if-no-files-found: error
 
   commit-prebuilds:
-    name: Commit and publish prebuilds
+    name: Commit prebuilds
     runs-on: ubuntu-24.04
     needs: build
 
@@ -97,13 +96,3 @@ jobs:
             git commit -m "Add node-pty Linux prebuilds"
             git push
           fi
-
-      - name: Publish to GitHub Packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "@kegustafsson:registry=https://npm.pkg.github.com" > .npmrc
-          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> .npmrc
-          npm pkg set name=@kegustafsson/signalk-wetty
-          npm pkg set publishConfig.registry=https://npm.pkg.github.com
-          npm publish --access public
