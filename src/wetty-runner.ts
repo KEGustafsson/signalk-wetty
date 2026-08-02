@@ -54,6 +54,19 @@ export interface WettyHandle {
   httpServer?: HttpServerLike
 }
 
+/** One winston log record, as a transport receives it. */
+export interface WettyLogInfo {
+  level?: unknown
+  message?: unknown
+}
+
+/** A winston transport, narrowed to what redirecting its output needs. */
+export interface WettyLogTransport {
+  level?: string
+  silent?: boolean
+  log?: (info: WettyLogInfo, next?: () => void) => void
+}
+
 export interface WettyModule {
   start: (
     ssh: WettySshConfig,
@@ -62,7 +75,7 @@ export interface WettyModule {
     forcessh: boolean,
     ssl?: { key: string; cert: string }
   ) => Promise<WettyHandle>
-  getLogger?: () => { transports?: Array<{ level?: string }> } | undefined
+  getLogger?: () => { transports?: WettyLogTransport[] } | undefined
 }
 
 export type WettyLoader = () => Promise<WettyModule>
@@ -123,10 +136,58 @@ const clearPrometheusRegistry = (): void => {
   }
 }
 
-const applyLogLevel = (mod: WettyModule, level: LogLevel): void => {
+/** Where winston puts the string its own format produced. */
+const FORMATTED_MESSAGE = Symbol.for('message')
+
+/**
+ * Winston's format has already rendered the record — that string is what the
+ * console transport would have printed, and it carries WeTTY's own label and
+ * timestamp — so it is preferred over reassembling one from the parts.
+ */
+const describeLogInfo = (info: WettyLogInfo): string => {
+  const formatted = (info as Record<symbol, unknown>)[FORMATTED_MESSAGE]
+  if (typeof formatted === 'string' && formatted !== '') {
+    return formatted
+  }
+  const level = typeof info.level === 'string' ? info.level : 'info'
+  const message =
+    typeof info.message === 'string'
+      ? info.message
+      : JSON.stringify(info.message)
+  return `WeTTY ${level}: ${message}`
+}
+
+/**
+ * WeTTY logs to a console transport it inherits from the Signal K server
+ * process, so its output lands in the server log whether anybody wanted it
+ * there or not. Replacing the transport's `log` redirects every record it
+ * would have printed into the plugin's own `app.debug()`, which the server
+ * gates per plugin — so WeTTY's logging is there when the plugin's debug
+ * logging is switched on, and nowhere otherwise.
+ *
+ * `silent` is not a winston level but a transport flag, so it is applied as
+ * one — leaving the level alone, which keeps the transport quiet rather than
+ * falling back to the logger's own default level.
+ */
+const routeLoggingToDebug = (
+  mod: WettyModule,
+  level: LogLevel,
+  log: (msg: string) => void
+): void => {
   try {
     const transports = mod.getLogger?.()?.transports
     transports?.forEach((transport) => {
+      // Assigned rather than wrapped, so restarting the plugin re-points the
+      // transport at the current debug function instead of stacking patches.
+      transport.log = (info: WettyLogInfo, next?: () => void) => {
+        log(describeLogInfo(info))
+        next?.()
+      }
+      if (level === 'silent') {
+        transport.silent = true
+        return
+      }
+      transport.silent = false
       transport.level = level
     })
   } catch {
@@ -203,6 +264,12 @@ export class WettyRunner {
     this.removeEnvVersionPatch = installEnvVersionPatch()
 
     const mod = await this.loader()
+
+    // Redirected before start() rather than after it: WeTTY logs its own
+    // startup through the same logger, so configuring it afterwards still lets
+    // those lines through to the Signal K server console.
+    routeLoggingToDebug(mod, options.logLevel, this.log)
+
     const { ssh, server, forcessh } = toWettyConfig(options)
     const ssl = resolveSsl(options)
 
@@ -262,7 +329,9 @@ export class WettyRunner {
     })
 
     this.handle = handle
-    applyLogLevel(mod, options.logLevel)
+
+    // Again, in case start() added transports of its own.
+    routeLoggingToDebug(mod, options.logLevel, this.log)
   }
 
   /**

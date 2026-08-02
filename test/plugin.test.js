@@ -149,8 +149,121 @@ test('plugin options are mapped onto WeTTY configuration', async () => {
 test('the configured log level is applied to WeTTYs logger', async () => {
   const { plugin, fake } = withFakeWetty()
   await plugin.start({ logLevel: 'debug' })
-  assert.deepEqual(fake.state.transports, [{ level: 'debug' }])
+  const [transport] = fake.state.transports
+  assert.equal(transport.level, 'debug')
+  assert.equal(transport.silent, false)
   await plugin.stop()
+})
+
+test('WeTTYs own logging is reported through the plugins debug log', async () => {
+  const { plugin, app, fake } = withFakeWetty()
+  await plugin.start({})
+  // What WeTTY would have printed to the console it inherits from the Signal K
+  // server: it reaches app.debug() instead, which the server gates per plugin.
+  fake.emitLog({ level: 'info', message: 'Server started' })
+  assert.ok(
+    app.calls.debug.includes('WeTTY info: Server started'),
+    `expected the WeTTY log line in ${JSON.stringify(app.calls.debug)}`
+  )
+  await plugin.stop()
+})
+
+test('a log record winston has already formatted is reported verbatim', async () => {
+  const { plugin, app, fake } = withFakeWetty()
+  await plugin.start({})
+  const formatted =
+    '{"label":"Wetty","level":"info","message":"Server started"}'
+  fake.emitLog({
+    level: 'info',
+    message: 'Server started',
+    [Symbol.for('message')]: formatted
+  })
+  assert.ok(
+    app.calls.debug.includes(formatted),
+    `expected the formatted line in ${JSON.stringify(app.calls.debug)}`
+  )
+  await plugin.stop()
+})
+
+test('silent drops WeTTYs logging instead of reporting it', async () => {
+  const { plugin, app, fake } = withFakeWetty()
+  await plugin.start({ logLevel: 'silent' })
+  // Silenced rather than levelled down: the level is left untouched so a silent
+  // transport cannot fall back to the logger's own default level.
+  const [transport] = fake.state.transports
+  assert.equal(transport.silent, true)
+  assert.equal(transport.level, 'http')
+
+  const before = app.calls.debug.length
+  fake.emitLog({ level: 'info', message: 'Server started' })
+  assert.equal(
+    app.calls.debug.length,
+    before,
+    'a silenced transport should report nothing'
+  )
+  await plugin.stop()
+})
+
+test('WebSocket upgrade forwarding is installed from the first request', async (t) => {
+  // Signal K hands plugins a router, never its HTTP server, and the property
+  // some servers carry it on is not part of the plugin API. The server is
+  // taken from a request instead — so it is a request that has to install the
+  // forwarder, and stop() has to take it back off again.
+  const http = require('node:http')
+  const { plugin } = withFakeWetty()
+  const { router, handlers } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  const frontend = http.createServer((req, res) => {
+    void handlers.get('USE /terminal')(req, res, () => {})
+  })
+  await new Promise((resolve) => frontend.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise((resolve) => frontend.close(resolve)))
+
+  await plugin.start({})
+  assert.equal(frontend.listenerCount('upgrade'), 0, 'nothing served yet')
+
+  // WeTTY is a fake here, so the proxy has nothing to reach and answers 502 —
+  // the forwarder is installed on the way in, before any of that matters.
+  await fetch(`http://127.0.0.1:${frontend.address().port}/`).catch(() => {})
+  assert.equal(frontend.listenerCount('upgrade'), 1)
+
+  await plugin.stop()
+  assert.equal(frontend.listenerCount('upgrade'), 0, 'removed on stop')
+})
+
+test('every listener serving the plugin forwards upgrades, not just the first', async (t) => {
+  // A server reachable over both HTTP and HTTPS serves the plugin's routes
+  // from more than one listener; a session opened through one of them must not
+  // depend on which listener happened to be served first.
+  const http = require('node:http')
+  const { plugin } = withFakeWetty()
+  const { router, handlers } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  const listeners = await Promise.all(
+    [0, 0].map(async () => {
+      const server = http.createServer((req, res) => {
+        void handlers.get('USE /terminal')(req, res, () => {})
+      })
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+      t.after(() => new Promise((resolve) => server.close(resolve)))
+      return server
+    })
+  )
+
+  await plugin.start({})
+  for (const server of listeners) {
+    await fetch(`http://127.0.0.1:${server.address().port}/`).catch(() => {})
+  }
+  for (const server of listeners) {
+    assert.equal(server.listenerCount('upgrade'), 1)
+  }
+
+  await plugin.stop()
+  for (const server of listeners) {
+    assert.equal(server.listenerCount('upgrade'), 0, 'removed on stop')
+  }
 })
 
 test('a failing WeTTY start is reported instead of thrown', async () => {

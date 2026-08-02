@@ -20,7 +20,7 @@ export interface EmbeddedProxy {
    */
   middleware: RequestHandler
   /**
-   * Wired to Signal K's own HTTP server `'upgrade'` event. Raw upgrade
+   * Wired to the Signal K server's own HTTP `'upgrade'` event. Raw upgrade
    * events bypass Express entirely, so the full mount path is matched and
    * stripped by hand here rather than relying on router-level stripping.
    */
@@ -51,9 +51,10 @@ export const resolveUpgradeUrl = (
  * genuinely embedded rather than just framed from a separate server on a
  * separate port. This is the same technique
  * github.com/KEGustafsson/signalk-embedded-webapp-proxy uses for arbitrary
- * web apps: `app.server` (the server's real `http.Server`) is exposed to
- * plugins specifically so WebSocket upgrades — which Express middleware
- * alone cannot intercept — can be forwarded too.
+ * web apps: the server's real `http.Server` also carries the WebSocket
+ * upgrades, which Express middleware alone cannot intercept, so those are
+ * forwarded too — see serverFromRequest() below for how that server is
+ * reached without touching the Signal K app object.
  */
 export const createEmbeddedProxy = (
   target: EmbeddedProxyTarget,
@@ -117,11 +118,24 @@ export const createEmbeddedProxy = (
 }
 
 /**
- * Installs the upgrade forwarder on Signal K's own HTTP server. A no-op,
- * removable installation when `server` is unavailable — an older Signal K
- * server that does not expose `app.server` — so the rest of the terminal
- * (HTTP requests, including the initial page load) still works; only
- * WebSocket sessions would fail, with the failure visible as a stuck
+ * The HTTP server a request arrived through. Node hangs the server off the
+ * socket it accepted the connection on, so a plugin that is only ever handed
+ * requests can still reach the server carrying them — and that is necessarily
+ * the same server a WebSocket upgrade for the same origin will arrive on.
+ *
+ * This is deliberately taken from the request rather than from the Signal K
+ * app object: the property some servers expose there is not part of the
+ * plugin API, so reading it makes the plugin break whenever the server's
+ * internals move. A request's own socket is plain Node and cannot go stale.
+ */
+export const serverFromRequest = (req: IncomingMessage): Server | undefined =>
+  (req.socket as (Socket & { server?: Server }) | undefined)?.server
+
+/**
+ * Installs the upgrade forwarder on the Signal K server's own HTTP server. A
+ * no-op, removable installation when `server` is unavailable, so the rest of
+ * the terminal (HTTP requests, including the initial page load) still works;
+ * only WebSocket sessions would fail, with the failure visible as a stuck
  * connection rather than a plugin crash.
  */
 export const installUpgradeForwarding = (

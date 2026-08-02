@@ -22,9 +22,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   links resolve correctly, and WeTTY's own port is loopback-only by default,
   never reachable from the network unless the Bind address setting is
   deliberately widened. See the README's "How it works" and "Security"
-  sections — this uses `app.server`, which is outside the documented
-  `@signalk/server-api` surface, so the plugin is no longer aimed at the
-  official app store.
+  sections. Forwarding WebSocket upgrades takes the server's own
+  `http.Server`, which is reached through a request the plugin's router
+  serves rather than off the plugin `app` object — nothing outside the
+  documented `@signalk/server-api` surface is touched.
 - SSH availability check. In `ssh` mode the plugin now connects to the
   configured SSH host at start and waits for the server's identification
   string, so a missing or stopped sshd is reported once with instructions for
@@ -41,6 +42,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- WebSocket upgrade forwarding no longer reads the HTTP server off the plugin
+  `app` object. That property is not part of the documented
+  `@signalk/server-api` surface — Signal K's own plugin CI fails a build for
+  reaching into it, and it can move without notice. The server is taken from
+  the first request the plugin's router serves instead: the terminal page
+  always loads over HTTP before its session upgrades, so the forwarder is in
+  place by the time it is needed, and it is removed again on stop. The
+  embedding behaves exactly as before.
+- WeTTY no longer writes to the Signal K server console. Its winston console
+  transport is redirected into the plugin's own `app.debug()`, which the
+  server gates per plugin, so every connection, disconnection and asset
+  request WeTTY logs is reported with the plugin's other debug output instead
+  of unconditionally in the server log. The redirect is installed before
+  WeTTY starts rather than after, so its own startup logging goes the same
+  way. `WeTTY log level` still decides how much of it is reported and gained
+  a `silent` option that drops it entirely.
 - `Bind address` defaults to `127.0.0.1` (was `0.0.0.0`): the terminal is
   reachable through the embedded webapp regardless of this setting, so the
   direct port no longer needs to be exposed by default.

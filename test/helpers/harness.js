@@ -27,9 +27,25 @@ const createMockApp = () => {
  * port or compiling a native module.
  */
 const createFakeWetty = ({ failWith } = {}) => {
-  const state = { starts: [], closes: 0, transports: [{ level: 'http' }] }
+  const state = {
+    starts: [],
+    closes: 0,
+    transports: [{ level: 'http', silent: false }]
+  }
   return {
     state,
+    /** Emits a log record the way winston hands one to a transport. */
+    emitLog: (info) => {
+      for (const transport of state.transports) {
+        // winston's TransportStream._write() returns before calling log() on a
+        // silent transport, so a fake that always calls it would report a
+        // silenced transport as still forwarding.
+        if (transport.silent) {
+          continue
+        }
+        transport.log?.(info, () => {})
+      }
+    },
     module: {
       start: async (ssh, server, command, forcessh, ssl) => {
         state.starts.push({ ssh, server, command, forcessh, ssl })

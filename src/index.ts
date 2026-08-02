@@ -12,7 +12,11 @@ import {
   type ResolvedOptions
 } from './config'
 import type { EmbeddedProxy } from './embedded-proxy'
-import { createEmbeddedProxy, installUpgradeForwarding } from './embedded-proxy'
+import {
+  createEmbeddedProxy,
+  installUpgradeForwarding,
+  serverFromRequest
+} from './embedded-proxy'
 import {
   nativeHelpText,
   probeNodePty,
@@ -26,6 +30,8 @@ import {
 } from './ssh-client-probe'
 import { probeSshServer, sshHelpText } from './ssh-probe'
 import { WettyRunner } from './wetty-runner'
+import type { IncomingMessage, Server } from 'node:http'
+
 import type { PluginDeps } from './deps'
 import type {
   PluginRouterLike,
@@ -117,7 +123,9 @@ function signalkWetty(
   const runner = new WettyRunner(deps.loadWetty, debug)
 
   let embeddedProxy: EmbeddedProxy | undefined
-  let removeUpgradeForwarding: (() => void) | undefined
+  let upgradeForwarders: Array<() => void> = []
+  let forwardingServers = new WeakSet<Server>()
+  let warnedWithoutServer = false
 
   let options: ResolvedOptions = resolveOptions({})
   let native: NativeProbeResult = { available: false, error: 'not probed yet' }
@@ -126,6 +134,54 @@ function signalkWetty(
   let rebuild: RebuildState = idleRebuild()
   let sshClient: SshClientProbe = NEUTRAL_SSH_CLIENT
   let ssh: SshCheck = skippedSshCheck(options)
+
+  /**
+   * WebSocket upgrades bypass Express entirely, so forwarding them needs the
+   * HTTP server itself — which Signal K does not hand to plugins. Rather than
+   * reading it off the app object, where it is not part of the plugin API and
+   * so can move without notice, it is taken from the first request the
+   * plugin's own router handles: the terminal page always loads over HTTP
+   * before its session upgrades, and that request necessarily arrived through
+   * the very server the upgrade will arrive on.
+   *
+   * Done per server rather than once: a server reachable over both HTTP and
+   * HTTPS serves the plugin's routes from more than one listener, and a
+   * session opened through one of them must not depend on which listener
+   * happened to be served first.
+   */
+  const ensureUpgradeForwarding = (req: IncomingMessage): void => {
+    if (!embeddedProxy) {
+      return
+    }
+    const server = serverFromRequest(req)
+    if (!server) {
+      if (!warnedWithoutServer) {
+        warnedWithoutServer = true
+        debug(
+          'The terminal request carried no HTTP server — the page will load, but WebSocket sessions will not connect.'
+        )
+      }
+      return
+    }
+    if (forwardingServers.has(server)) {
+      return
+    }
+    forwardingServers.add(server)
+    upgradeForwarders.push(
+      installUpgradeForwarding(server, embeddedProxy.handleUpgrade)
+    )
+    debug('Forwarding WebSocket upgrades for the embedded terminal')
+  }
+
+  /** Detaches every upgrade listener installed by ensureUpgradeForwarding(). */
+  const stopUpgradeForwarding = (): void => {
+    upgradeForwarders.forEach((remove) => {
+      remove()
+    })
+    upgradeForwarders = []
+    forwardingServers = new WeakSet<Server>()
+    warnedWithoutServer = false
+  }
 
   const setStatus = (msg: string) => {
     message = msg
@@ -239,21 +295,15 @@ function signalkWetty(
       // Genuinely embeds the terminal — reverse-proxied through Signal K's
       // own origin and port, WebSocket upgrades included — rather than just
       // framing a separate server on its own port. See src/embedded-proxy.ts.
-      removeUpgradeForwarding?.()
+      // The forwarder itself is installed by the first request through the
+      // plugin's router, which is where the HTTP server carrying it becomes
+      // reachable — see ensureUpgradeForwarding().
+      stopUpgradeForwarding()
       embeddedProxy = createEmbeddedProxy(
         { port: options.port },
         EMBEDDED_TERMINAL_PATH,
         (msg) => debug(msg)
       )
-      removeUpgradeForwarding = installUpgradeForwarding(
-        app.server,
-        embeddedProxy.handleUpgrade
-      )
-      if (!app.server) {
-        debug(
-          'Signal K did not expose app.server — the terminal page will load, but WebSocket sessions will not connect.'
-        )
-      }
 
       // Checked after the terminal is up: neither a missing ssh client nor a
       // missing SSH server is a reason to withhold the page — sessions fail,
@@ -277,8 +327,7 @@ function signalkWetty(
   }
 
   const stop = async (): Promise<void> => {
-    removeUpgradeForwarding?.()
-    removeUpgradeForwarding = undefined
+    stopUpgradeForwarding()
     embeddedProxy = undefined
     try {
       await runner.stop()
@@ -301,6 +350,7 @@ function signalkWetty(
         res.end(JSON.stringify({ error: 'Terminal is not running' }))
         return
       }
+      ensureUpgradeForwarding(req)
       await embeddedProxy.middleware(req, res, next)
     })
 

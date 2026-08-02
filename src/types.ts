@@ -1,4 +1,4 @@
-import type { IncomingMessage, Server, ServerResponse } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 
 /**
  * Minimal structural types for the parts of the Signal K plugin API this
@@ -9,18 +9,18 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 
 export type JsonSchema = Record<string, unknown>
 
+/**
+ * Deliberately without the server's own `http.Server`: Signal K does not
+ * offer plugins one, and the property some servers happen to carry it on is
+ * not part of the plugin API. The embedded terminal reaches the HTTP server
+ * through a request its router handles instead — see serverFromRequest() in
+ * src/embedded-proxy.ts.
+ */
 export interface PluginServerApp {
   debug: (...args: unknown[]) => void
   error: (...args: unknown[]) => void
   setPluginStatus: (msg: string) => void
   setPluginError: (msg: string) => void
-  /**
-   * The Signal K server's own underlying HTTP server. Exposed by real Signal
-   * K servers so a plugin can genuinely embed a service — including
-   * forwarding WebSocket upgrades — under the server's own origin, rather
-   * than running it on a separate port. See src/embedded-proxy.ts.
-   */
-  server?: Server
 }
 
 /**

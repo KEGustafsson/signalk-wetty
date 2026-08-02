@@ -47,6 +47,30 @@ test('the runner reports whether a server is up', async () => {
   assert.equal(runner.running, false)
 })
 
+test('logging is redirected before WeTTY gets a chance to log', async () => {
+  // WeTTY logs its own startup, so a transport redirected only after start()
+  // still lets those lines reach the Signal K server console.
+  const transports = [{ level: 'info', silent: false }]
+  const logged = []
+  const module = {
+    start: async () => {
+      transports[0].log?.(
+        { level: 'info', message: 'Server started' },
+        () => {}
+      )
+      return { close: (cb) => cb?.() }
+    },
+    getLogger: () => ({ transports })
+  }
+  const runner = new WettyRunner(
+    async () => module,
+    (msg) => logged.push(msg)
+  )
+  await runner.start(resolveOptions({}))
+  assert.deepEqual(logged, ['WeTTY info: Server started'])
+  await runner.stop()
+})
+
 test('a failed start leaves the runner stopped', async () => {
   const fake = createFakeWetty({ failWith: new Error('boom') })
   const runner = new WettyRunner(async () => fake.module)
