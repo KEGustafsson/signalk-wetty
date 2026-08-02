@@ -23,11 +23,6 @@ import {
   rebuildNodePty,
   type NativeProbeResult
 } from './native'
-import {
-  probeSshClient as probeSshClientDefault,
-  sshClientHelpText,
-  type SshClientProbe
-} from './ssh-client-probe'
 import { probeSshServer, sshHelpText } from './ssh-probe'
 import { WettyRunner } from './wetty-runner'
 import type { IncomingMessage, Server } from 'node:http'
@@ -66,9 +61,6 @@ const skippedSshCheck = (options: ResolvedOptions): SshCheck => ({
   checkedAt: null
 })
 
-/** Local mode never shells out to ssh either, so there is nothing to probe. */
-const NEUTRAL_SSH_CLIENT: SshClientProbe = { available: true, error: null }
-
 const buildStatus = (
   options: ResolvedOptions,
   running: boolean,
@@ -76,7 +68,6 @@ const buildStatus = (
   error: string | null,
   native: NativeProbeResult,
   rebuild: RebuildState,
-  sshClient: SshClientProbe,
   ssh: SshCheck
 ): PluginStatus => ({
   running,
@@ -95,11 +86,6 @@ const buildStatus = (
     help: nativeHelpText(native)
   },
   rebuild,
-  sshClient: {
-    available: sshClient.available,
-    error: sshClient.error,
-    help: sshClientHelpText(sshClient)
-  },
   ssh
 })
 
@@ -111,7 +97,6 @@ function signalkWetty(
   const probeNative = deps.probeNative ?? probeNodePty
   const rebuildNative = deps.rebuildNative ?? rebuildNodePty
   const probeSsh = deps.probeSsh ?? probeSshServer
-  const probeSshClientFn = deps.probeSshClient ?? probeSshClientDefault
   const debug = (msg: string) => {
     try {
       app.debug(msg)
@@ -132,7 +117,6 @@ function signalkWetty(
   let message = 'Not started'
   let error: string | null = null
   let rebuild: RebuildState = idleRebuild()
-  let sshClient: SshClientProbe = NEUTRAL_SSH_CLIENT
   let ssh: SshCheck = skippedSshCheck(options)
 
   /**
@@ -222,19 +206,13 @@ function signalkWetty(
     })
 
   /**
-   * A missing ssh client and an unreachable SSH server both mean every
-   * session will fail, and both are reported the same way, so start() and
-   * GET /ssh-check share this rather than duplicating the combine-and-report
-   * logic.
+   * An unreachable SSH server means every session will fail, so start() and
+   * GET /ssh-check share this rather than duplicating the report logic.
    */
   const applySshStatus = (): void => {
-    const problems = [
-      !sshClient.available ? sshClient.error : null,
-      ssh.checked && !ssh.reachable ? ssh.error : null
-    ].filter((problem): problem is string => Boolean(problem))
-    if (problems.length > 0) {
+    if (ssh.checked && !ssh.reachable) {
       setError(
-        `${describeRunning()} — but ${problems.join('; ')}. The WeTTY Terminal webapp stays open and shows the fix instructions above the terminal.`
+        `${describeRunning()} — but ${ssh.error}. The WeTTY Terminal webapp stays open and shows the fix instructions above the terminal.`
       )
     } else {
       setStatus(describeRunning())
@@ -277,8 +255,6 @@ function signalkWetty(
   const start = async (rawOptions: unknown): Promise<void> => {
     options = resolveOptions(rawOptions)
     native = probeNative()
-    sshClient =
-      effectiveMode(options) === 'ssh' ? probeSshClientFn() : NEUTRAL_SSH_CLIENT
     ssh = skippedSshCheck(options)
 
     if (!native.available) {
@@ -305,11 +281,10 @@ function signalkWetty(
         (msg) => debug(msg)
       )
 
-      // Checked after the terminal is up: neither a missing ssh client nor a
-      // missing SSH server is a reason to withhold the page — sessions fail,
-      // but the page itself is fine, and fixing either takes effect without
-      // touching the plugin (a restart re-probes the client; "Check again"
-      // in the webapp re-probes the server).
+      // Checked after the terminal is up: a missing SSH server is not a
+      // reason to withhold the page — sessions fail, but the page itself is
+      // fine, and fixing it takes effect without touching the plugin ("Check
+      // again" in the webapp re-probes the server).
       ssh = await checkSsh()
       applySshStatus()
     } catch (err) {
@@ -363,7 +338,6 @@ function signalkWetty(
           error,
           native,
           rebuild,
-          sshClient,
           ssh
         )
       )

@@ -33,12 +33,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   time somebody opens the terminal. The terminal still starts, the webapp shows
   the fix above it, and `GET /plugins/signalk-wetty/ssh-check` re-runs the check
   so a freshly started sshd can be confirmed without restarting the plugin.
-- SSH client availability check. In `ssh` mode every session shells out to
-  the local `ssh` binary, and on a minimal container image there may not be
-  one — exactly what happened during this work. The plugin now checks for it
-  on start (`sshClient` in the status payload) and, if missing, reports it
-  and shows an install command in the webapp, the same way a missing SSH
-  server is reported. `local` mode never probes for it.
+- A built-in SSH client. `ssh` mode no longer shells out to the system `ssh`
+  (and `sshpass`) binaries — WeTTY's own PTY spawn is transparently redirected
+  to a pure-JS `ssh2` connection instead (see `src/ssh-pty-bridge.ts`), so no
+  `openssh-client` install is needed inside the Signal K machine or container,
+  which is what minimal Docker images used to be missing. Covers host/port/
+  user with password or private-key auth, plus an interactive password prompt
+  in the terminal itself when none is configured; does not support
+  `ssh_config`, ProxyJump/bastion hosts, agent forwarding, or GSSAPI. As a
+  side effect, a configured password is never exposed on a process's argv the
+  way `sshpass -p <password>` used to.
 
 ### Changed
 

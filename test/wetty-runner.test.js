@@ -13,14 +13,15 @@ test('toWettyConfig renames plugin options to WeTTYs vocabulary', () => {
     resolveOptions({
       ssh: {
         keyPath: '/etc/signalk/ssh/id_ed25519',
-        configFile: '/etc/signalk/ssh/config',
         password: 'secret'
       }
     })
   )
   assert.equal(config.ssh.key, '/etc/signalk/ssh/id_ed25519')
-  assert.equal(config.ssh.config, '/etc/signalk/ssh/config')
   assert.equal(config.ssh.pass, 'secret')
+  // The built-in SSH client never shells out to `ssh`, so ssh_config has
+  // nothing to apply to — WeTTY's own `config` field is always empty now.
+  assert.equal(config.ssh.config, '')
   // WeTTY treats empty strings as "not set", so unset paths must stay empty
   // rather than becoming the string "undefined".
   const empty = toWettyConfig(resolveOptions({}))

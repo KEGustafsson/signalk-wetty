@@ -4,6 +4,7 @@ import type { PatchableHttpServer } from './csp-patch'
 import { installCspPatch } from './csp-patch'
 import { installEnvVersionPatch } from './env-version-patch'
 import { resolutionPaths } from './native'
+import { installSshPtyPatch } from './ssh-pty-bridge'
 
 /**
  * WeTTY 3.x is an ESM-only package, and this plugin is compiled to CommonJS so
@@ -24,6 +25,12 @@ interface WettySshConfig {
   key: string
   port: number
   knownHosts: string
+  /**
+   * WeTTY's own `ssh -F` support — always empty. The built-in SSH client
+   * (see src/ssh-pty-bridge.ts) never shells out to `ssh` in the first
+   * place, so an `ssh_config` file has nothing left to apply to; only kept
+   * because WeTTY's `start()` still expects the field.
+   */
   config: string
   allowRemoteHosts: boolean
   allowRemoteCommand: boolean
@@ -94,7 +101,7 @@ export const toWettyConfig = (
     key: options.ssh.keyPath,
     port: options.ssh.port,
     knownHosts: options.ssh.knownHosts,
-    config: options.ssh.configFile,
+    config: '',
     allowRemoteHosts: options.ssh.allowRemoteHosts,
     allowRemoteCommand: options.ssh.allowRemoteCommand
   },
@@ -243,6 +250,7 @@ export class WettyRunner {
   private handle: WettyHandle | undefined
   private startCount = 0
   private removeEnvVersionPatch: (() => void) | undefined
+  private removeSshPtyPatch: (() => void) | undefined
 
   constructor(
     private readonly loader: WettyLoader = defaultLoader,
@@ -262,6 +270,13 @@ export class WettyRunner {
     // a session could reach the real, crash-prone `env --version` call. See
     // src/env-version-patch.ts.
     this.removeEnvVersionPatch = installEnvVersionPatch()
+
+    // Only ssh mode ever spawns `ssh`; local mode's `login(1)` never goes
+    // through this patch. See src/ssh-pty-bridge.ts.
+    this.removeSshPtyPatch =
+      effectiveMode(options) === 'ssh'
+        ? installSshPtyPatch(options.ssh)
+        : undefined
 
     const mod = await this.loader()
 
@@ -295,6 +310,8 @@ export class WettyRunner {
       // Nothing ever started, so stop() will not run to clean this up.
       this.removeEnvVersionPatch?.()
       this.removeEnvVersionPatch = undefined
+      this.removeSshPtyPatch?.()
+      this.removeSshPtyPatch = undefined
       throw err
     }
     this.startCount += 1
@@ -345,6 +362,8 @@ export class WettyRunner {
     this.handle = undefined
     this.removeEnvVersionPatch?.()
     this.removeEnvVersionPatch = undefined
+    this.removeSshPtyPatch?.()
+    this.removeSshPtyPatch = undefined
     if (!handle) {
       return
     }

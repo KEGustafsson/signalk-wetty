@@ -124,7 +124,7 @@ const loadWebapp = ({ status, routes = {} } = {}) => {
     'document',
     'fetch',
     `${webappSource()}
-    return { renderTerminal, renderError, sshWarning, sshClientWarning, load }`
+    return { renderTerminal, renderError, sshWarning, load }`
   )
 
   return { root, requests, settle, internals: factory(document, fetch) }
@@ -139,7 +139,6 @@ const runningStatus = (overrides = {}) => ({
   effectiveMode: 'ssh',
   allowIframe: true,
   native: { available: true, help: '' },
-  sshClient: { available: true, error: null, help: '' },
   ssh: { checked: true, reachable: true, error: null, help: '' },
   rebuild: { running: false, ok: true, output: '' },
   ...overrides
