@@ -149,7 +149,16 @@ test('plugin options are mapped onto WeTTY configuration', async () => {
 test('the configured log level is applied to WeTTYs logger', async () => {
   const { plugin, fake } = withFakeWetty()
   await plugin.start({ logLevel: 'debug' })
-  assert.deepEqual(fake.state.transports, [{ level: 'debug' }])
+  assert.deepEqual(fake.state.transports, [{ level: 'debug', silent: false }])
+  await plugin.stop()
+})
+
+test('WeTTY logs nothing to the server console by default', async () => {
+  const { plugin, fake } = withFakeWetty()
+  await plugin.start({})
+  // Silenced rather than levelled down, and the level is left untouched so a
+  // silent transport cannot fall back to the logger's own default level.
+  assert.deepEqual(fake.state.transports, [{ level: 'http', silent: true }])
   await plugin.stop()
 })
 

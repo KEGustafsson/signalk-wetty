@@ -54,6 +54,12 @@ export interface WettyHandle {
   httpServer?: HttpServerLike
 }
 
+/** A winston transport, narrowed to the two properties that silence it. */
+export interface WettyLogTransport {
+  level?: string
+  silent?: boolean
+}
+
 export interface WettyModule {
   start: (
     ssh: WettySshConfig,
@@ -62,7 +68,7 @@ export interface WettyModule {
     forcessh: boolean,
     ssl?: { key: string; cert: string }
   ) => Promise<WettyHandle>
-  getLogger?: () => { transports?: Array<{ level?: string }> } | undefined
+  getLogger?: () => { transports?: WettyLogTransport[] } | undefined
 }
 
 export type WettyLoader = () => Promise<WettyModule>
@@ -123,10 +129,22 @@ const clearPrometheusRegistry = (): void => {
   }
 }
 
+/**
+ * WeTTY logs to a console transport it inherits from the Signal K server
+ * process, so its output lands in the server log whether anybody wanted it
+ * there or not. `silent` is not a winston level but a transport flag, so it is
+ * applied as one — leaving the level alone, which keeps the transport quiet
+ * rather than falling back to the logger's own default level.
+ */
 const applyLogLevel = (mod: WettyModule, level: LogLevel): void => {
   try {
     const transports = mod.getLogger?.()?.transports
     transports?.forEach((transport) => {
+      if (level === 'silent') {
+        transport.silent = true
+        return
+      }
+      transport.silent = false
       transport.level = level
     })
   } catch {
@@ -203,6 +221,12 @@ export class WettyRunner {
     this.removeEnvVersionPatch = installEnvVersionPatch()
 
     const mod = await this.loader()
+
+    // Applied before start() rather than after it: WeTTY logs its own startup
+    // through the same logger, so configuring it afterwards still lets those
+    // lines through to the Signal K server log.
+    applyLogLevel(mod, options.logLevel)
+
     const { ssh, server, forcessh } = toWettyConfig(options)
     const ssl = resolveSsl(options)
 
@@ -262,6 +286,8 @@ export class WettyRunner {
     })
 
     this.handle = handle
+
+    // Again, in case start() added transports of its own.
     applyLogLevel(mod, options.logLevel)
   }
 

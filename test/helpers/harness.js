@@ -27,7 +27,11 @@ const createMockApp = () => {
  * port or compiling a native module.
  */
 const createFakeWetty = ({ failWith } = {}) => {
-  const state = { starts: [], closes: 0, transports: [{ level: 'http' }] }
+  const state = {
+    starts: [],
+    closes: 0,
+    transports: [{ level: 'http', silent: false }]
+  }
   return {
     state,
     module: {

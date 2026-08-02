@@ -47,6 +47,24 @@ test('the runner reports whether a server is up', async () => {
   assert.equal(runner.running, false)
 })
 
+test('the logger is silenced before WeTTY gets a chance to log', async () => {
+  // WeTTY logs its own startup, so a level applied only after start() still
+  // lets those lines reach the Signal K server console.
+  const transports = [{ level: 'info', silent: false }]
+  const seenAtStart = []
+  const module = {
+    start: async () => {
+      seenAtStart.push(...transports.map((t) => ({ ...t })))
+      return { close: (cb) => cb?.() }
+    },
+    getLogger: () => ({ transports })
+  }
+  const runner = new WettyRunner(async () => module)
+  await runner.start(resolveOptions({}))
+  assert.deepEqual(seenAtStart, [{ level: 'info', silent: true }])
+  await runner.stop()
+})
+
 test('a failed start leaves the runner stopped', async () => {
   const fake = createFakeWetty({ failWith: new Error('boom') })
   const runner = new WettyRunner(async () => fake.module)
