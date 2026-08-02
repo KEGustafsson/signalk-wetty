@@ -44,5 +44,6 @@ test('sshClientHelpText explains how to install one when missing', () => {
     error: 'ssh: command not found'
   })
   assert.match(help, /openssh-client/)
-  assert.match(help, /apt install/)
+  assert.match(help, /sudo apt update && sudo apt install -y openssh-client/)
+  assert.match(help, /container/)
 })

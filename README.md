@@ -10,7 +10,7 @@ keep running: enable the plugin and **Webapps → WeTTY Terminal** appears in th
 admin UI.
 
 <p align="center">
-  <img src="public/screenshot-terminal.svg" alt="The terminal embedded in the Signal K admin UI" width="640">
+  <img src="doc/screenshot.jpg" alt="The terminal embedded in the Signal K admin UI" width="640">
 </p>
 
 ## Requirements
@@ -147,7 +147,7 @@ platform:
 
 ```sh
 # Debian, Ubuntu, Raspberry Pi OS, OpenPlotter
-sudo apt install -y openssh-client
+sudo apt update && sudo apt install -y openssh-client
 # Alpine (a common base for minimal containers)
 apk add openssh-client
 ```
@@ -240,7 +240,7 @@ WeTTY allocates PTYs through
 every Raspberry Pi, OpenPlotter and Venus OS install — it has to be compiled at
 install time.
 
-Published packages can include Linux x64 and arm64 `pty.node` prebuilds under
+Published packages can include Linux x64, arm64 and armv7 `pty.node` prebuilds under
 `native-prebuilds/`. When one matches the host, the plugin copies it into
 `node-pty`'s expected `prebuilds/linux-*/pty.node` directory before loading
 WeTTY, so no plugin install script is needed.
@@ -257,7 +257,7 @@ which skips that compile step. The plugin therefore:
   fails outright,
 - probes `node-pty` on start and, if it cannot be loaded, refuses to start WeTTY
   and reports exactly what is wrong in the plugin status,
-- installs a bundled Linux x64/arm64 prebuild into `node-pty` when available,
+- installs a bundled Linux x64/arm64/armv7 prebuild into `node-pty` when available,
 - offers a **Rebuild node-pty** button in the webapp as a fallback, which runs
   `npm rebuild node-pty --foreground-scripts` in the Signal K install directory.
 

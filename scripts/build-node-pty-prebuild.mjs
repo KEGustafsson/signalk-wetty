@@ -11,13 +11,13 @@ const root = path.resolve(dirname, '..')
 if (process.platform !== 'linux') {
   throw new Error(
     `node-pty prebuilds must be produced on Linux runners, not ${process.platform}. ` +
-      'Run the "Native node-pty prebuilds" GitHub Actions workflow to build linux-x64 and linux-arm64.'
+      'Run the "Native node-pty prebuilds" GitHub Actions workflow to build linux-x64, linux-arm64 and linux-arm.'
   )
 }
 
-if (!['arm64', 'x64'].includes(process.arch)) {
+if (!['arm', 'arm64', 'x64'].includes(process.arch)) {
   throw new Error(
-    `node-pty prebuilds are only produced for arm64/x64, not ${process.arch}`
+    `node-pty prebuilds are only produced for arm/arm64/x64, not ${process.arch}`
   )
 }
 
