@@ -15,8 +15,13 @@ SSH and is only exposed through Signal K.
 
 - Signal K server 2.x
 - Node.js 20 or newer
-- An SSH client in the machine or container running Signal K
 - An SSH server on the configured destination
+
+SSH connections use a built-in JavaScript SSH client — no `ssh` binary needs to
+be installed in the machine or container running Signal K, which is what makes
+this plugin work out of the box in minimal Docker images. It covers the common
+case (host/port/user, password or private-key auth) but does not support
+`ssh_config`, ProxyJump/bastion hosts, agent forwarding, or GSSAPI.
 
 SSH is not required when using local mode, but local mode only works when the
 Signal K server process runs as root.
@@ -53,41 +58,11 @@ The defaults work when an SSH server is available on the Signal K host.
 | Bind address    | `127.0.0.1` | Keeps the direct WeTTY port private to the Signal K host.       |
 | Command         | `login`     | Command started for each terminal session.                      |
 
-Additional options support SSH keys, `ssh_config`, known hosts, HTTPS, logging,
-and URL-selected hosts or commands. Their descriptions are shown in the plugin
+Additional options support SSH keys, known hosts, HTTPS, logging, and
+URL-selected hosts or commands. Their descriptions are shown in the plugin
 configuration page.
 
-## Docker and missing SSH client
-
-Minimal Docker images often do not include the `ssh` command. Installing an SSH
-client on the Docker host does not make it available inside the Signal K
-container. The webapp stays open and displays the fix above the terminal when
-this happens.
-
-Install the SSH client **inside the Signal K container**:
-
-```sh
-# Debian or Ubuntu based image
-sudo apt update && sudo apt install -y openssh-client
-
-# Alpine based image
-apk add openssh-client
-```
-
-When the container runs as root and does not include `sudo`, run this instead:
-
-```sh
-apt update && apt install -y openssh-client
-```
-
-Restart the plugin or container after installation. Packages installed manually
-inside a running container may be lost when it is recreated, so add
-`openssh-client` to the image or Dockerfile for a permanent installation.
-
 ## SSH server unavailable
-
-An SSH client and an SSH server are different things. The client runs beside
-Signal K; the server runs on the configured SSH host.
 
 To provide an SSH server on Debian, Ubuntu, Raspberry Pi OS, or OpenPlotter:
 

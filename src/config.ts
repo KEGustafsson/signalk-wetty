@@ -41,7 +41,6 @@ export interface WettySshOptions {
   auth: string
   knownHosts: string
   keyPath: string
-  configFile: string
   password: string
   allowRemoteHosts: boolean
   allowRemoteCommand: boolean
@@ -95,7 +94,6 @@ export const DEFAULTS: ResolvedOptions = {
     auth: 'password',
     knownHosts: '/dev/null',
     keyPath: '',
-    configFile: '',
     password: '',
     allowRemoteHosts: false,
     allowRemoteCommand: false
@@ -163,7 +161,6 @@ export const resolveOptions = (raw: unknown): ResolvedOptions => {
       auth: asString(ssh.auth, DEFAULTS.ssh.auth),
       knownHosts: asString(ssh.knownHosts, DEFAULTS.ssh.knownHosts),
       keyPath: asString(ssh.keyPath, DEFAULTS.ssh.keyPath),
-      configFile: asString(ssh.configFile, DEFAULTS.ssh.configFile),
       password: typeof ssh.password === 'string' ? ssh.password : '',
       allowRemoteHosts: asBoolean(
         ssh.allowRemoteHosts,
@@ -310,17 +307,11 @@ export const PLUGIN_SCHEMA: JsonSchema = {
             'INSECURE: any client that reaches the terminal logs in without a password. Leave empty unless the port is firewalled off.',
           default: DEFAULTS.ssh.keyPath
         },
-        configFile: {
-          type: 'string',
-          title: 'ssh_config file',
-          description: 'Alternative ssh configuration file (ssh -F).',
-          default: DEFAULTS.ssh.configFile
-        },
         password: {
           type: 'string',
           title: 'Password',
           description:
-            'INSECURE: stored in clear text in the plugin configuration and requires sshpass on the server. Leave empty to be prompted in the terminal instead.',
+            'INSECURE: stored in clear text in the plugin configuration. Leave empty to be prompted in the terminal instead.',
           default: DEFAULTS.ssh.password
         },
         allowRemoteHosts: {

@@ -264,23 +264,6 @@
         return box
       }
 
-      // A missing ssh client fails every session exactly like a missing SSH
-      // server does, but there is nothing to re-check live: installing a
-      // package does not change anything the running plugin process can see
-      // until it restarts, so this omits the "Check again" button ssh
-      // server gets and says so instead.
-      function sshClientWarning(status) {
-        if (status.sshClient.available) {
-          return null
-        }
-        return el('div', { className: 'panel error notice' }, [
-          el('h1', { textContent: 'No SSH client' }),
-          p(status.sshClient.error || 'No SSH client is installed.'),
-          el('pre', { textContent: status.sshClient.help }),
-          p('Restart the plugin after installing to pick this up.')
-        ])
-      }
-
       function renderTerminal(status) {
         const url = terminalUrl()
         const warnings = []
@@ -306,9 +289,7 @@
           })
         ])
 
-        const sshClient = sshClientWarning(status)
-        const ssh = sshWarning(status)
-        const sshNotices = [sshClient, ssh].filter(Boolean)
+        const sshNotices = [sshWarning(status)].filter(Boolean)
 
         if (!status.allowIframe) {
           panel('Terminal ready', [

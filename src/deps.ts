@@ -1,5 +1,4 @@
 import type { NativeProbeResult, RebuildResult } from './native'
-import type { SshClientProbe } from './ssh-client-probe'
 import type { SshProbeResult } from './ssh-probe'
 import type { WettyLoader } from './wetty-runner'
 
@@ -13,5 +12,4 @@ export interface PluginDeps {
   probeNative?: () => NativeProbeResult
   rebuildNative?: (probe: NativeProbeResult) => Promise<RebuildResult>
   probeSsh?: (host: string, port: number) => Promise<SshProbeResult>
-  probeSshClient?: () => SshClientProbe
 }

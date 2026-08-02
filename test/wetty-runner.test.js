@@ -13,14 +13,15 @@ test('toWettyConfig renames plugin options to WeTTYs vocabulary', () => {
     resolveOptions({
       ssh: {
         keyPath: '/etc/signalk/ssh/id_ed25519',
-        configFile: '/etc/signalk/ssh/config',
         password: 'secret'
       }
     })
   )
   assert.equal(config.ssh.key, '/etc/signalk/ssh/id_ed25519')
-  assert.equal(config.ssh.config, '/etc/signalk/ssh/config')
   assert.equal(config.ssh.pass, 'secret')
+  // The built-in SSH client never shells out to `ssh`, so ssh_config has
+  // nothing to apply to — WeTTY's own `config` field is always empty now.
+  assert.equal(config.ssh.config, '')
   // WeTTY treats empty strings as "not set", so unset paths must stay empty
   // rather than becoming the string "undefined".
   const empty = toWettyConfig(resolveOptions({}))
@@ -77,6 +78,74 @@ test('a failed start leaves the runner stopped', async () => {
   await assert.rejects(() => runner.start(resolveOptions({})), /boom/)
   assert.equal(runner.running, false)
   await runner.stop()
+})
+
+test('ssh mode patches the shared node-pty and stop() restores it', async () => {
+  const nodePty = require('node-pty')
+  const original = nodePty.spawn
+  const fake = createFakeWetty()
+  const runner = new WettyRunner(async () => fake.module)
+
+  await runner.start(resolveOptions({ mode: 'ssh' }))
+  assert.notEqual(
+    nodePty.spawn,
+    original,
+    'ssh mode should patch node-pty.spawn'
+  )
+
+  await runner.stop()
+  assert.equal(
+    nodePty.spawn,
+    original,
+    'stop() should restore the original spawn'
+  )
+})
+
+test('local mode never patches node-pty when it is actually reachable', async () => {
+  const nodePty = require('node-pty')
+  const original = nodePty.spawn
+  const fake = createFakeWetty()
+  const runner = new WettyRunner(async () => fake.module)
+  const root = typeof process.getuid === 'function' && process.getuid() === 0
+
+  await runner.start(resolveOptions({ mode: 'local' }))
+  if (root) {
+    assert.equal(
+      nodePty.spawn,
+      original,
+      'local mode never spawns ssh, so nothing should be patched'
+    )
+  } else {
+    // Not running as root, so the plugin falls back to ssh, which patches
+    // node-pty exactly as an explicit ssh mode would.
+    assert.notEqual(nodePty.spawn, original)
+  }
+
+  await runner.stop()
+  assert.equal(nodePty.spawn, original)
+})
+
+test('a rejected loader still removes both patches instead of leaving node-pty patched', async () => {
+  // this.loader() used to sit outside the try/catch that cleans up
+  // installEnvVersionPatch()/installSshPtyPatch(), so a loader rejection —
+  // the exact shape of a missing `wetty` package, which src/index.ts has a
+  // dedicated error hint for — left node-pty patched for the rest of the
+  // process even though the runner never started.
+  const nodePty = require('node-pty')
+  const original = nodePty.spawn
+  const runner = new WettyRunner(async () => {
+    throw new Error("Cannot find package 'wetty'")
+  })
+
+  await assert.rejects(
+    () => runner.start(resolveOptions({ mode: 'ssh' })),
+    /wetty/
+  )
+  assert.equal(
+    nodePty.spawn,
+    original,
+    'a rejected loader must not leave node-pty patched'
+  )
 })
 
 test('stop() is bounded when WeTTY never invokes its close callback', async () => {

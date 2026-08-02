@@ -74,7 +74,6 @@ test('every branch of the status payload has a rendering path', () => {
     'renderError',
     'status.native.available',
     'status.allowIframe',
-    'status.sshClient.available',
     'status.ssh.reachable',
     'res.status === 401'
   ]) {
@@ -105,28 +104,6 @@ test('a running terminal still renders when status contains an SSH warning', asy
   const text = textOf(root)
   assert.match(text, /No SSH server/)
   assert.match(text, /openssh-server/)
-  assert.doesNotMatch(text, /Terminal unavailable/)
-})
-
-test('a running terminal still renders when the SSH client is missing', async () => {
-  const { root, settle } = loadWebapp({
-    status: runningStatus({
-      sshClient: {
-        available: false,
-        error: 'ssh: command not found',
-        help: 'apt update && apt install -y openssh-client'
-      }
-    })
-  })
-  await settle()
-
-  assert.ok(
-    find(root, 'iframe'),
-    'the running terminal was replaced instead of kept'
-  )
-  const text = textOf(root)
-  assert.match(text, /No SSH client/)
-  assert.match(text, /openssh-client/)
   assert.doesNotMatch(text, /Terminal unavailable/)
 })
 

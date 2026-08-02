@@ -94,12 +94,6 @@ export interface PluginStatus {
     help: string
   }
   rebuild: RebuildState
-  /** Whether the local `ssh` binary is installed; irrelevant in local mode. */
-  sshClient: {
-    available: boolean
-    error: string | null
-    help: string
-  }
   ssh: SshCheck
 }
 
