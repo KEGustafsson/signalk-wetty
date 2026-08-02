@@ -32,11 +32,12 @@
     "appIcon": "./app-icon.svg",
     "displayName": "WeTTY Terminal",
     "screenshots": [
-      "./public/screenshot-terminal.svg",
-      "./public/screenshot-config.svg"
+      "./doc/screenshot.jpg",
+      "./doc/screenshot_no_ssh_client.jpg"
     ]
   },
   "files": [
+    "doc/",
     "dist/",
     "native-prebuilds/",
     "public/",

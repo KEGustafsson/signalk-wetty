@@ -75,3 +75,10 @@ test('every branch of the status payload has a rendering path', () => {
     assert.ok(html.includes(marker), `webapp does not handle ${marker}`)
   }
 })
+
+test('a running terminal still renders when status contains an SSH warning', () => {
+  // Missing ssh/sshd is a session problem, not a reason to replace the running
+  // terminal with the generic unavailable screen.
+  assert.match(html, /if \(!status\.running\) \{/)
+  assert.doesNotMatch(html, /!status\.running \|\| status\.error/)
+})

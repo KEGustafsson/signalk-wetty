@@ -591,7 +591,9 @@ test('a missing SSH client is reported without withholding the terminal', async 
   assert.equal(body.sshClient.available, false)
   assert.equal(body.sshClient.error, 'ssh: command not found')
   assert.match(body.sshClient.help, /openssh-client/)
+  assert.match(body.sshClient.help, /container/)
   assert.match(app.lastError(), /command not found/)
+  assert.match(app.lastError(), /fix instructions above the terminal/)
   await plugin.stop()
 })
 

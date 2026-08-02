@@ -65,7 +65,10 @@ test('the rebuild command avoids npm configs rejected by npm 11', () => {
 
 test('linux node-pty prebuild paths match the package layout', () => {
   assert.equal(bundledNodePtyPrebuildPath('darwin', 'arm64'), null)
-  assert.equal(nodePtyPrebuildTargetPath('/pkg/node-pty', 'linux', 'arm'), null)
+  assert.equal(
+    nodePtyPrebuildTargetPath('/pkg/node-pty', 'linux', 'arm'),
+    path.join('/pkg/node-pty', 'prebuilds', 'linux-arm', 'pty.node')
+  )
   assert.match(
     bundledNodePtyPrebuildPath('linux', 'arm64'),
     /native-prebuilds[\\/]linux-arm64[\\/]pty\.node$/
