@@ -204,6 +204,68 @@ test('silent drops WeTTYs logging instead of reporting it', async () => {
   await plugin.stop()
 })
 
+test('WebSocket upgrade forwarding is installed from the first request', async (t) => {
+  // Signal K hands plugins a router, never its HTTP server, and the property
+  // some servers carry it on is not part of the plugin API. The server is
+  // taken from a request instead — so it is a request that has to install the
+  // forwarder, and stop() has to take it back off again.
+  const http = require('node:http')
+  const { plugin } = withFakeWetty()
+  const { router, handlers } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  const frontend = http.createServer((req, res) => {
+    void handlers.get('USE /terminal')(req, res, () => {})
+  })
+  await new Promise((resolve) => frontend.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise((resolve) => frontend.close(resolve)))
+
+  await plugin.start({})
+  assert.equal(frontend.listenerCount('upgrade'), 0, 'nothing served yet')
+
+  // WeTTY is a fake here, so the proxy has nothing to reach and answers 502 —
+  // the forwarder is installed on the way in, before any of that matters.
+  await fetch(`http://127.0.0.1:${frontend.address().port}/`).catch(() => {})
+  assert.equal(frontend.listenerCount('upgrade'), 1)
+
+  await plugin.stop()
+  assert.equal(frontend.listenerCount('upgrade'), 0, 'removed on stop')
+})
+
+test('every listener serving the plugin forwards upgrades, not just the first', async (t) => {
+  // A server reachable over both HTTP and HTTPS serves the plugin's routes
+  // from more than one listener; a session opened through one of them must not
+  // depend on which listener happened to be served first.
+  const http = require('node:http')
+  const { plugin } = withFakeWetty()
+  const { router, handlers } = createMockRouter()
+  plugin.registerWithRouter(router)
+
+  const listeners = await Promise.all(
+    [0, 0].map(async () => {
+      const server = http.createServer((req, res) => {
+        void handlers.get('USE /terminal')(req, res, () => {})
+      })
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+      t.after(() => new Promise((resolve) => server.close(resolve)))
+      return server
+    })
+  )
+
+  await plugin.start({})
+  for (const server of listeners) {
+    await fetch(`http://127.0.0.1:${server.address().port}/`).catch(() => {})
+  }
+  for (const server of listeners) {
+    assert.equal(server.listenerCount('upgrade'), 1)
+  }
+
+  await plugin.stop()
+  for (const server of listeners) {
+    assert.equal(server.listenerCount('upgrade'), 0, 'removed on stop')
+  }
+})
+
 test('a failing WeTTY start is reported instead of thrown', async () => {
   const { plugin, app } = withFakeWetty({
     wetty: { failWith: new Error('listen EADDRINUSE') }

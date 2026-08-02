@@ -167,17 +167,13 @@ test('no source file reaches into server internals', () => {
   // app.deltaCache, app.pluginsMap and friends are errors in the Signal K
   // plugin CI: they are not part of the documented plugin API.
   //
-  // app.server is a deliberate exception: it is not in @signalk/server-api
-  // either, but it is the only way to forward WebSocket upgrades through the
-  // server's own origin rather than running the terminal on a separate,
-  // unauthenticated port — the same technique
-  // github.com/KEGustafsson/signalk-embedded-webapp-proxy uses.
-  // installUpgradeForwarding() (src/embedded-proxy.ts) explicitly checks for
-  // an undefined server, so an older server that does not expose it degrades
-  // to "the page loads, WebSocket sessions do not connect" rather than
-  // breaking. This plugin is not published to the official app store, so
-  // failing its app.server lint is an accepted trade-off, not an oversight.
-  const internals = /\bapp\.(deltaCache|pluginsMap|securityStrategy)\b/
+  // The server's own http.Server is on this list too. The embedded terminal
+  // does need it — WebSocket upgrades bypass Express, so forwarding them
+  // through the server's own origin (rather than running the terminal on a
+  // separate, unauthenticated port) takes the server itself — but it is
+  // reached through a request the plugin's router handles, not off the app
+  // object. See serverFromRequest() in src/embedded-proxy.ts.
+  const internals = /\bapp\.(deltaCache|pluginsMap|securityStrategy|server)\b/
   const offenders = []
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

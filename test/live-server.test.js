@@ -91,9 +91,9 @@ test(
   { skip },
   async (t) => {
     const app = createMockApp()
-    // Stands in for Signal K's own HTTP server, exposed as app.server so the
-    // plugin can forward WebSocket upgrades the same way regular HTTP
-    // requests are forwarded through the router.
+    // Stands in for Signal K's own HTTP server. It is never handed to the
+    // plugin — the plugin finds it through the requests it serves, which is
+    // how WebSocket upgrades get forwarded alongside regular HTTP requests.
     const frontend = http.createServer()
     const frontendPort = await freePort()
     await new Promise((resolve) =>
@@ -101,19 +101,16 @@ test(
     )
     t.after(() => new Promise((resolve) => frontend.close(resolve)))
 
-    const plugin = createPlugin(
-      { ...app, server: frontend },
-      {
-        probeSsh: async (host, port) => ({
-          reachable: true,
-          host,
-          port,
-          banner: 'SSH-2.0-OpenSSH_9.6p1',
-          error: null,
-          code: null
-        })
-      }
-    )
+    const plugin = createPlugin(app, {
+      probeSsh: async (host, port) => ({
+        reachable: true,
+        host,
+        port,
+        banner: 'SSH-2.0-OpenSSH_9.6p1',
+        error: null,
+        code: null
+      })
+    })
     const { router, handlers } = createMockRouter()
     plugin.registerWithRouter(router)
 
@@ -142,6 +139,10 @@ test(
     const page = await fetch(`http://127.0.0.1:${frontendPort}${MOUNT_PREFIX}/`)
     assert.equal(page.status, 200)
     assert.match(await page.text(), /id="terminal"/)
+
+    // Serving that page is what gave the plugin the server, so upgrades for
+    // the session the page is about to open are now forwarded too.
+    assert.equal(frontend.listenerCount('upgrade'), 1)
 
     const handshake = await fetch(
       `http://127.0.0.1:${frontendPort}${MOUNT_PREFIX}/socket.io/?EIO=4&transport=polling`

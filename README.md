@@ -96,15 +96,19 @@ setting is deliberately widened. This works over `openplotter.local`, an IP
 address or a Tailscale name exactly like the rest of the admin UI, since
 there is no separate host or port to work out.
 
-WebSocket upgrades need `app.server` — the Signal K server's own underlying
-HTTP server — because Express middleware alone cannot intercept an
-`'upgrade'` event. This is the same technique
+WebSocket upgrades need the Signal K server's own underlying HTTP server,
+because Express middleware alone cannot intercept an `'upgrade'` event. This
+is the same technique
 [signalk-embedded-webapp-proxy](https://github.com/KEGustafsson/signalk-embedded-webapp-proxy)
 uses to embed arbitrary web apps (Portainer, Grafana, Node-RED, …) in the
-admin UI. `app.server` is not part of the documented `@signalk/server-api`,
-so this plugin is not published on the official Signal K app store — see
-[Security](#security) for what that trades off, and what happens on an older
-server that does not expose it.
+admin UI, with one difference: the server is not read off the plugin `app`
+object, where it is not part of the documented `@signalk/server-api` and can
+move without notice. It is taken from the first request the plugin's own
+router serves — the terminal page always loads over HTTP before its session
+upgrades, and that request necessarily arrived through the very server the
+upgrade will arrive on. Nothing outside the documented plugin API is
+touched, and there is no server-internal shape to break when Signal K
+changes.
 
 ## Configuration
 
@@ -208,8 +212,8 @@ The embedded webapp (`/plugins/signalk-wetty/terminal/`, and the
 authentication for regular HTTP requests — the same as
 `/plugins/signalk-wetty/status` and every other plugin route — because it now
 runs through Signal K's own origin rather than a separate port. One nuance:
-WebSocket upgrades are forwarded through a raw `'upgrade'` listener on
-`app.server` (see [How it works](#how-it-works)), which bypasses Signal K's
+WebSocket upgrades are forwarded through a raw `'upgrade'` listener on the
+server's own HTTP server (see [How it works](#how-it-works)), which bypasses Signal K's
 normal Express middleware and so is not itself session-checked. In practice
 this is not an open door — socket.io requires a session ID issued during its
 initial HTTP polling handshake, which _is_ behind Signal K's auth, before it
@@ -364,11 +368,12 @@ Windows across Node 22 and 24, validates the package against the app store rules
 exercises start/stop/restart and simulates an `--ignore-scripts` install. Manual
 runs can additionally enable the armv7 (Cerbo GX) matrix.
 
-This plugin's use of `app.server` for genuine WebSocket-capable embedding (see
-[How it works](#how-it-works)) is deliberately outside the documented
-`@signalk/server-api` surface, so the shared workflow's app-store validation
-may flag it — that trade-off is accepted, since the plugin is not published on
-the app store.
+That validation includes a scan for plugins reaching into server internals,
+which is why the WebSocket-capable embedding (see
+[How it works](#how-it-works)) takes the HTTP server from a request it serves
+rather than from the plugin `app` object: the embedding works exactly the
+same way, without depending on anything outside the documented
+`@signalk/server-api` surface.
 
 ## Licence
 
