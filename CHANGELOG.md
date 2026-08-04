@@ -34,10 +34,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   has never run on a Signal K install — the 404 meant it was never installed
   — so switching its caching on in front of the terminal's socket.io traffic
   would buy an offline cache of a page that is useless without the server it
-  talks to. The worker served instead registers, clears any cache an earlier
-  version left behind, unregisters itself, and installs no `fetch` handler at
-  all, so nothing on the terminal's path is ever intercepted (see
-  `src/service-worker-asset.ts`).
+  talks to. The worker served instead registers, deletes WeTTY's own cache by
+  name, unregisters itself, and installs no `fetch` handler at all, so nothing
+  on the terminal's path is ever intercepted. Cache Storage is keyed per
+  origin rather than per worker scope, so it deliberately does not enumerate
+  the origin's caches — the admin UI and every other Signal K webapp and
+  plugin share that storage (see `src/service-worker-asset.ts`).
 - WeTTY's own username prompt (shown in `ssh` mode whenever no SSH user is
   configured) reported its exit with a bare `console.error()` call, bypassing
   the winston logger entirely — so `Process exited with code: 0` reached the

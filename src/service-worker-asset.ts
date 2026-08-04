@@ -18,16 +18,33 @@ export const SERVICE_WORKER_PATH = '/sw.js'
  * it was never installed — so serving it would switch on caching behaviour
  * nobody here has ever run, in front of the terminal's own socket.io
  * traffic, to buy an offline cache of a page that is useless without the
- * server it talks to. This one registers, unregisters itself, drops any
- * cache a previous version left behind, and installs no `fetch` handler at
- * all, so nothing on the terminal's path is ever intercepted. The request
- * gets its 200, the log stays clean, and any worker already installed in a
- * browser is cleaned up on its next visit.
+ * server it talks to. This one registers, unregisters itself, drops WeTTY's
+ * own cache, and installs no `fetch` handler at all, so nothing on the
+ * terminal's path is ever intercepted. The request gets its 200, the log
+ * stays clean, and any worker already installed in a browser is cleaned up
+ * on its next visit.
  */
+
+/**
+ * The cache names WeTTY's own service worker creates — `CACHE` in
+ * `wetty/build/sw.js`. Only these are removed on activation.
+ *
+ * Cache Storage is keyed per *origin*, not per service worker scope, so
+ * `caches.keys()` here would also return caches belonging to the Signal K
+ * admin UI and every other webapp and plugin served from the same host and
+ * port. Deleting all of them to clean up after WeTTY would throw away data
+ * this plugin has no business touching.
+ */
+const WETTY_CACHE_NAMES = ['wetty-v1']
 const UNREGISTERING_SERVICE_WORKER = `// Served by signalk-wetty in place of WeTTY's own service worker.
 // It exists to answer the request WeTTY itself cannot serve from ~/.signalk,
 // and to remove any worker an earlier version registered. It installs no
 // fetch handler, so it never intercepts terminal traffic.
+
+// Cache Storage is per-origin, not per-scope: every other Signal K webapp and
+// plugin shares it. Only WeTTY's own caches are removed, by name.
+const WETTY_CACHES = ${JSON.stringify(WETTY_CACHE_NAMES)}
+
 self.addEventListener('install', () => {
   self.skipWaiting()
 })
@@ -35,8 +52,7 @@ self.addEventListener('install', () => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
-      const keys = await caches.keys()
-      await Promise.all(keys.map((key) => caches.delete(key)))
+      await Promise.all(WETTY_CACHES.map((name) => caches.delete(name)))
       await self.registration.unregister()
     })(),
   )

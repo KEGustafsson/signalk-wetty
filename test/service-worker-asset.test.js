@@ -49,12 +49,52 @@ test('a GET for the service worker is answered with a 200', () => {
   assert.equal(res.headers['content-length'], String(res.body.length))
 })
 
-test('the served worker unregisters itself and clears any cache', () => {
+test('the served worker unregisters itself and clears WeTTYs cache', () => {
   // The point of serving anything at all: WeTTY's own worker has never run on
   // a Signal K install, so this must switch nothing on — only clean up.
   const body = bodyOf()
   assert.match(body, /self\.registration\.unregister\(\)/)
   assert.match(body, /caches\.delete/)
+  assert.match(body, /wetty-v1/)
+})
+
+test('caches belonging to the rest of the origin are left alone', async () => {
+  // Cache Storage is per-origin, not per-worker-scope, so caches.keys() here
+  // would also list the admin UI's and every other plugin's caches. Deleting
+  // those to clean up after WeTTY would throw away other webapps' data.
+  assert.doesNotMatch(bodyOf(), /caches\.keys\(\)/)
+
+  // Run the worker's activate handler against a stand-in Cache Storage
+  // holding one WeTTY cache and one that belongs to somebody else.
+  const deleted = []
+  const listeners = {}
+  const sandbox = {
+    self: {
+      addEventListener: (name, fn) => {
+        listeners[name] = fn
+      },
+      skipWaiting: () => {},
+      registration: { unregister: async () => {} }
+    },
+    caches: {
+      keys: async () => {
+        throw new Error('the worker must not enumerate the origins caches')
+      },
+      delete: async (name) => {
+        deleted.push(name)
+        return true
+      }
+    }
+  }
+  sandbox.globalThis = sandbox
+  require('node:vm').runInNewContext(bodyOf(), sandbox)
+
+  const waits = []
+  await listeners.activate({ waitUntil: (p) => waits.push(p) })
+  await Promise.all(waits)
+
+  assert.deepEqual(deleted, ['wetty-v1'])
+  assert.ok(!deleted.includes('signalk-admin-ui'))
 })
 
 test('the served worker installs no fetch handler', () => {

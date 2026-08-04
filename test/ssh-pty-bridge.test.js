@@ -149,6 +149,31 @@ test('installSshPtyPatch resolves the real shared node-pty by default', () => {
 })
 
 /**
+ * A host key for the throwaway server below, retried until ssh2 can read
+ * back what it just generated.
+ *
+ * `generateKeyPairSync('ed25519')` strips leading zero bytes from the public
+ * key it encodes (keygen.js, "Remove leading zero bytes") — right for a DER
+ * integer, wrong for ed25519, whose public key is a fixed 32 bytes where a
+ * leading zero is data. Whenever a generated key happens to start with 0x00
+ * the result is 31 bytes long and ssh2's own parser rejects it with
+ * "Malformed OpenSSH private key". That is 1 run in 256, which is exactly
+ * how often this suite failed on an unrelated commit.
+ *
+ * Only key *generation* is affected, so this stays in the tests: the plugin
+ * is an ssh2 client and never generates a key, it reads the user's.
+ */
+const generateHostKey = () => {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const key = ssh2.utils.generateKeyPairSync('ed25519')
+    if (!(ssh2.utils.parseKey(key.private) instanceof Error)) {
+      return key
+    }
+  }
+  throw new Error('ssh2 could not generate a parseable ed25519 host key')
+}
+
+/**
  * A throwaway in-process SSH server, so spawnSshPty() can be exercised
  * end-to-end without Docker, a system sshd, or a system ssh client — the
  * whole point of replacing WeTTY's shell-out with a JS client. Accepts only
@@ -157,7 +182,7 @@ test('installSshPtyPatch resolves the real shared node-pty by default', () => {
  */
 const startTestSshServer = () =>
   new Promise((resolve) => {
-    const hostKey = ssh2.utils.generateKeyPairSync('ed25519')
+    const hostKey = generateHostKey()
     const windowChanges = []
     const authAttempts = []
     const server = new ssh2.Server(
