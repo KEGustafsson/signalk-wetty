@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Restarting the plugin and then opening a terminal that prompts for a
+  username killed the whole Signal K server with SIGSEGV — no stack trace,
+  no log line, just a process that was suddenly gone (and, under a container
+  restart policy, a server that came back a few seconds later). The bundled
+  `pty.node` was reinstalled with `fs.copyFileSync` on every `start()`, and
+  from the second one onwards that rewrote, in place, the very file node-pty
+  already had mapped into the server's address space; the next call into it
+  faulted. In `ssh` mode the only call that ever reaches node-pty is WeTTY's
+  own username prompt, which is why it took an empty `ssh.user` to show up.
+  The prebuild is now left alone when it already holds the right bytes, and
+  otherwise staged beside the target and renamed into place, so a mapping
+  another process is holding is never disturbed (see `src/native.ts`).
+
 - WeTTY's service worker request logged a `NotFoundError: Not Found` stack
   trace on every terminal load from a browser in a secure context. WeTTY
   serves the file with `res.sendFile()` using an absolute path and no `root`
