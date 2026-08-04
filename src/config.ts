@@ -21,7 +21,14 @@ export type ConnectionMode = 'ssh' | 'local'
  * routeLoggingToDebug() in src/wetty-runner.ts.
  */
 export type LogLevel =
-  'silent' | 'error' | 'warn' | 'info' | 'http' | 'verbose' | 'debug' | 'silly'
+  | 'silent'
+  | 'error'
+  | 'warn'
+  | 'info'
+  | 'http'
+  | 'verbose'
+  | 'debug'
+  | 'silly'
 
 export const LOG_LEVELS: LogLevel[] = [
   'silent',

@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-04
+
 ### Fixed
 
 - Restarting the plugin and then opening a terminal that prompts for a
@@ -27,8 +29,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   option, so `send` applies its dotfile rule to every segment of the
   filesystem path — and Signal K always lives in `~/.signalk`, which matches.
   The file was there all along; only WeTTY's own path handling refused to
-  send it. The proxy now answers that one request itself, so the request
-  never reaches WeTTY and the service worker installs as intended (see
+  send it. The proxy now answers that one request itself, so it never reaches
+  WeTTY. What it serves is deliberately not WeTTY's own worker: that worker
+  has never run on a Signal K install — the 404 meant it was never installed
+  — so switching its caching on in front of the terminal's socket.io traffic
+  would buy an offline cache of a page that is useless without the server it
+  talks to. The worker served instead registers, clears any cache an earlier
+  version left behind, unregisters itself, and installs no `fetch` handler at
+  all, so nothing on the terminal's path is ever intercepted (see
   `src/service-worker-asset.ts`).
 - WeTTY's own username prompt (shown in `ssh` mode whenever no SSH user is
   configured) reported its exit with a bare `console.error()` call, bypassing
@@ -193,6 +201,7 @@ Initial release.
 - Signal K plugin CI workflow, unit and live-server test suites, a local
   Docker integration environment and a `signalk-server` smoke test.
 
-[Unreleased]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/KEGustafsson/signalk-wetty/releases/tag/v0.1.0
