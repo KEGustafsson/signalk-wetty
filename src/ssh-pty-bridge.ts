@@ -159,7 +159,9 @@ const makeHostVerifier = (
 }
 
 type AuthAction =
-  { type: 'publickey' } | { type: 'password' } | { type: 'interactive' }
+  | { type: 'publickey' }
+  | { type: 'password' }
+  | { type: 'interactive' }
 
 /**
  * Mirrors `ssh`'s `PreferredAuthentications` (this plugin's `ssh.auth`
