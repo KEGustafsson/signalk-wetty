@@ -109,7 +109,7 @@ export const createEmbeddedProxy = (
   // WeTTY cannot serve its own service worker from a Signal K installation —
   // see src/service-worker-asset.ts — so that one request is answered here
   // and never reaches it.
-  const serviceWorker = createServiceWorkerHandler(onError)
+  const serviceWorker = createServiceWorkerHandler()
 
   // Keeps `upgrade` on the wrapper so the returned middleware is still a
   // complete http-proxy-middleware handler rather than a bare function.

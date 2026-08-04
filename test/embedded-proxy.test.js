@@ -108,7 +108,7 @@ test('WeTTY’s service worker is served by the proxy, never forwarded', async (
   // The stand-in target echoes the request path back as JSON, so anything
   // resembling a URL here means the request reached WeTTY after all.
   assert.doesNotMatch(body, new RegExp(MOUNT_PATH))
-  assert.match(body, /addEventListener/)
+  assert.match(body, /self\.registration\.unregister\(\)/)
 })
 
 test('resolveUpgradeUrl strips the mount path from a matching URL', () => {
