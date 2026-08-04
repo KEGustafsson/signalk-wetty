@@ -81,8 +81,34 @@ test('a proxy error is reported through the callback instead of crashing', async
 
   const res = await fetch(`http://127.0.0.1:${frontend.port}/`)
   assert.ok(res.status >= 500)
-  assert.equal(errors.length, 1)
-  assert.match(errors[0], /Embedded terminal proxy error/)
+  // Filtered rather than counted outright: the same callback also carries the
+  // service-worker lookup's own report when wetty is not installed at all.
+  const proxyErrors = errors.filter((msg) =>
+    /Embedded terminal proxy error/.test(msg)
+  )
+  assert.equal(proxyErrors.length, 1)
+})
+
+test('WeTTY’s service worker is served by the proxy, never forwarded', async (t) => {
+  // WeTTY cannot serve this file itself from a Signal K installation: it uses
+  // res.sendFile() with an absolute path and no root, so `send` applies its
+  // dotfile rule to the whole path and 404s on the ".signalk" segment.
+  const target = await startTarget()
+  t.after(target.close)
+
+  const proxy = createEmbeddedProxy({ port: target.port }, MOUNT_PATH, () => {})
+  const frontend = await startFrontend(proxy.middleware)
+  t.after(frontend.close)
+
+  const res = await fetch(`http://127.0.0.1:${frontend.port}/sw.js`)
+  assert.equal(res.status, 200)
+  assert.match(res.headers.get('content-type'), /javascript/)
+
+  const body = await res.text()
+  // The stand-in target echoes the request path back as JSON, so anything
+  // resembling a URL here means the request reached WeTTY after all.
+  assert.doesNotMatch(body, new RegExp(MOUNT_PATH))
+  assert.match(body, /addEventListener/)
 })
 
 test('resolveUpgradeUrl strips the mount path from a matching URL', () => {

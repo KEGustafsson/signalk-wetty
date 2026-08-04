@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- WeTTY's service worker request logged a `NotFoundError: Not Found` stack
+  trace on every terminal load from a browser in a secure context. WeTTY
+  serves the file with `res.sendFile()` using an absolute path and no `root`
+  option, so `send` applies its dotfile rule to every segment of the
+  filesystem path — and Signal K always lives in `~/.signalk`, which matches.
+  The file was there all along; only WeTTY's own path handling refused to
+  send it. The proxy now answers that one request itself, so the request
+  never reaches WeTTY and the service worker installs as intended (see
+  `src/service-worker-asset.ts`).
 - WeTTY's own username prompt (shown in `ssh` mode whenever no SSH user is
   configured) reported its exit with a bare `console.error()` call, bypassing
   the winston logger entirely — so `Process exited with code: 0` reached the
