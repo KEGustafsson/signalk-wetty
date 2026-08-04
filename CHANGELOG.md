@@ -6,8 +6,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-04
+
 ### Fixed
 
+- Restarting the plugin and then opening a terminal that prompts for a
+  username killed the whole Signal K server with SIGSEGV — no stack trace,
+  no log line, just a process that was suddenly gone (and, under a container
+  restart policy, a server that came back a few seconds later). The bundled
+  `pty.node` was reinstalled with `fs.copyFileSync` on every `start()`, and
+  from the second one onwards that rewrote, in place, the very file node-pty
+  already had mapped into the server's address space; the next call into it
+  faulted. In `ssh` mode the only call that ever reaches node-pty is WeTTY's
+  own username prompt, which is why it took an empty `ssh.user` to show up.
+  The prebuild is now left alone when it already holds the right bytes, and
+  otherwise staged beside the target and renamed into place, so a mapping
+  another process is holding is never disturbed (see `src/native.ts`).
+
+- WeTTY's service worker request logged a `NotFoundError: Not Found` stack
+  trace on every terminal load from a browser in a secure context. WeTTY
+  serves the file with `res.sendFile()` using an absolute path and no `root`
+  option, so `send` applies its dotfile rule to every segment of the
+  filesystem path — and Signal K always lives in `~/.signalk`, which matches.
+  The file was there all along; only WeTTY's own path handling refused to
+  send it. The proxy now answers that one request itself, so it never reaches
+  WeTTY. What it serves is deliberately not WeTTY's own worker: that worker
+  has never run on a Signal K install — the 404 meant it was never installed
+  — so switching its caching on in front of the terminal's socket.io traffic
+  would buy an offline cache of a page that is useless without the server it
+  talks to. The worker served instead registers, deletes WeTTY's own cache by
+  name, unregisters itself, and installs no `fetch` handler at all, so nothing
+  on the terminal's path is ever intercepted. Cache Storage is keyed per
+  origin rather than per worker scope, so it deliberately does not enumerate
+  the origin's caches — the admin UI and every other Signal K webapp and
+  plugin share that storage (see `src/service-worker-asset.ts`).
 - WeTTY's own username prompt (shown in `ssh` mode whenever no SSH user is
   configured) reported its exit with a bare `console.error()` call, bypassing
   the winston logger entirely — so `Process exited with code: 0` reached the
@@ -171,6 +203,7 @@ Initial release.
 - Signal K plugin CI workflow, unit and live-server test suites, a local
   Docker integration environment and a `signalk-server` smoke test.
 
-[Unreleased]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/KEGustafsson/signalk-wetty/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/KEGustafsson/signalk-wetty/releases/tag/v0.1.0

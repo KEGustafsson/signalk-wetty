@@ -1,6 +1,6 @@
 {
   "name": "signalk-wetty",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Embedded WeTTY web terminal for the Signal K server admin UI",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

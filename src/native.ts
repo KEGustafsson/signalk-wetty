@@ -65,6 +65,37 @@ export const nodePtyPrebuildTargetPath = (
   return path.join(packageDir, 'prebuilds', `linux-${arch}`, 'pty.node')
 }
 
+/** Byte-identical check, used to leave an already-correct binary alone. */
+const sameFileContent = (a: string, b: string): boolean => {
+  try {
+    if (fs.statSync(a).size !== fs.statSync(b).size) {
+      return false
+    }
+    return fs.readFileSync(a).equals(fs.readFileSync(b))
+  } catch {
+    // A missing or unreadable target simply needs writing.
+    return false
+  }
+}
+
+/**
+ * Installs the bundled `pty.node` without ever writing over the file already
+ * in place.
+ *
+ * This runs on every plugin `start()`, and by the second one node-pty is
+ * loaded — its `pty.node` mapped into the Signal K server's own address
+ * space. `fs.copyFileSync` truncates and rewrites its destination in place,
+ * so copying onto that path pulls the mapped pages out from under the
+ * running process: the next call into node-pty (in `ssh` mode, only WeTTY's
+ * username prompt ever makes one) faults, and the server dies with SIGSEGV —
+ * no stack trace, no log line, just a restart.
+ *
+ * So the file is left alone when it already holds the right bytes, which is
+ * every case after the first; and when it genuinely has to be replaced, the
+ * new copy is written beside it and renamed into place. A rename swaps the
+ * directory entry and leaves the old inode intact, so anything that already
+ * mapped it keeps working and the new binary is picked up at next load.
+ */
 export const installBundledNodePtyPrebuild = (
   packageDir: string,
   platform = process.platform,
@@ -77,8 +108,22 @@ export const installBundledNodePtyPrebuild = (
     return null
   }
 
+  if (sameFileContent(source, target)) {
+    return target
+  }
+
   fs.mkdirSync(path.dirname(target), { recursive: true })
-  fs.copyFileSync(source, target)
+  // Same directory, so the rename below stays on one filesystem and is
+  // therefore atomic; the pid keeps two servers sharing a prebuild directory
+  // from writing the same temporary file.
+  const staged = `${target}.${String(process.pid)}.tmp`
+  try {
+    fs.copyFileSync(source, staged)
+    fs.renameSync(staged, target)
+  } catch (err) {
+    fs.rmSync(staged, { force: true })
+    throw err
+  }
   return target
 }
 

@@ -107,6 +107,141 @@ test('a bundled prebuild is copied into node-ptys expected directory', () => {
   }
 })
 
+test('an already-correct prebuild is left completely untouched', () => {
+  // The plugin installs the prebuild on every start(), and by the second one
+  // node-pty is loaded with this exact file mapped into the server's address
+  // space. Rewriting it in place pulls those pages out from under the running
+  // process and the next pty spawn takes the whole server down with SIGSEGV,
+  // so the second install must not write at all.
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wetty-prebuild-'))
+  const prebuildRoot = path.join(temp, 'native-prebuilds')
+  const bundled = bundledNodePtyPrebuildPath('linux', 'arm64', prebuildRoot)
+  try {
+    fs.mkdirSync(path.dirname(bundled), { recursive: true })
+    fs.writeFileSync(bundled, 'native-binary-placeholder')
+    const packageDir = path.join(temp, 'node-pty')
+
+    const installed = installBundledNodePtyPrebuild(
+      packageDir,
+      'linux',
+      'arm64',
+      prebuildRoot
+    )
+    // Dated deliberately into the past rather than compared against a
+    // freshly-recorded mtime: both installs can land inside one filesystem
+    // timestamp tick, which would let a rewrite pass unnoticed.
+    const marked = new Date(Date.now() - 60_000)
+    fs.utimesSync(installed, marked, marked)
+    const before = fs.statSync(installed)
+
+    const again = installBundledNodePtyPrebuild(
+      packageDir,
+      'linux',
+      'arm64',
+      prebuildRoot
+    )
+    const after = fs.statSync(again)
+
+    assert.equal(again, installed)
+    assert.equal(
+      after.mtimeMs,
+      before.mtimeMs,
+      'the file must be neither rewritten nor replaced'
+    )
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('a genuinely stale prebuild is replaced, leaving nothing behind', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wetty-prebuild-'))
+  const prebuildRoot = path.join(temp, 'native-prebuilds')
+  const bundled = bundledNodePtyPrebuildPath('linux', 'arm64', prebuildRoot)
+  try {
+    fs.mkdirSync(path.dirname(bundled), { recursive: true })
+    fs.writeFileSync(bundled, 'new-native-binary')
+
+    const packageDir = path.join(temp, 'node-pty')
+    const target = path.join(packageDir, 'prebuilds', 'linux-arm64', 'pty.node')
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, 'stale-binary-of-a-different-size')
+
+    const installed = installBundledNodePtyPrebuild(
+      packageDir,
+      'linux',
+      'arm64',
+      prebuildRoot
+    )
+
+    assert.equal(installed, target)
+    assert.equal(fs.readFileSync(installed, 'utf8'), 'new-native-binary')
+    // The staging file must not survive in the directory node-pty scans.
+    assert.deepEqual(fs.readdirSync(path.dirname(target)), ['pty.node'])
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+// Windows refuses to rename over a file that anything holds open, and its
+// stat().ino carries no such guarantee — but bundledNodePtyPrebuildPath()
+// returns null off Linux, so this path never runs there in the first place.
+test(
+  'replacing a stale prebuild leaves an already-open handle intact',
+  { skip: process.platform === 'win32' ? 'POSIX rename semantics' : false },
+  () => {
+    // The whole point of renaming rather than copying: an inode another
+    // process already mapped must keep the bytes it was loaded with.
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wetty-prebuild-'))
+    const prebuildRoot = path.join(temp, 'native-prebuilds')
+    const bundled = bundledNodePtyPrebuildPath('linux', 'arm64', prebuildRoot)
+    let heldOpen
+    try {
+      fs.mkdirSync(path.dirname(bundled), { recursive: true })
+      fs.writeFileSync(bundled, 'new-native-binary')
+
+      const packageDir = path.join(temp, 'node-pty')
+      const target = path.join(
+        packageDir,
+        'prebuilds',
+        'linux-arm64',
+        'pty.node'
+      )
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, 'stale-binary-of-a-different-size')
+      const staleIno = fs.statSync(target).ino
+      // Stands in for the mapping a running process would be holding.
+      heldOpen = fs.openSync(target, 'r')
+
+      const installed = installBundledNodePtyPrebuild(
+        packageDir,
+        'linux',
+        'arm64',
+        prebuildRoot
+      )
+
+      assert.notEqual(
+        fs.statSync(installed).ino,
+        staleIno,
+        'a replacement must be a new inode, not the old one overwritten'
+      )
+      const held = Buffer.alloc(32)
+      const read = fs.readSync(heldOpen, held, 0, 32, 0)
+      assert.equal(
+        held.subarray(0, read).toString('utf8'),
+        'stale-binary-of-a-different-size',
+        'an already-open handle must still see the bytes it was loaded with'
+      )
+    } finally {
+      // Closed here rather than after the assertions: a failure above would
+      // otherwise leak the handle and make the cleanup below fail too.
+      if (heldOpen !== undefined) {
+        fs.closeSync(heldOpen)
+      }
+      fs.rmSync(temp, { recursive: true, force: true })
+    }
+  }
+)
+
 test('the rebuild result is verified by loading node-pty afterwards', () => {
   const command = verifyNodePtyCommand('/srv/signalk', 1234)
   assert.equal(command.command, process.execPath)

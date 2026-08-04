@@ -4,6 +4,8 @@ import { Socket } from 'node:net'
 import { createProxyMiddleware } from 'http-proxy-middleware'
 import type { RequestHandler } from 'http-proxy-middleware'
 
+import { createServiceWorkerHandler } from './service-worker-asset'
+
 export type { RequestHandler }
 
 export interface EmbeddedProxyTarget {
@@ -104,8 +106,29 @@ export const createEmbeddedProxy = (
     }
   })
 
+  // WeTTY cannot serve its own service worker from a Signal K installation —
+  // see src/service-worker-asset.ts — so that one request is answered here
+  // and never reaches it.
+  const serviceWorker = createServiceWorkerHandler()
+
+  // Keeps `upgrade` on the wrapper so the returned middleware is still a
+  // complete http-proxy-middleware handler rather than a bare function.
+  const middleware: RequestHandler = Object.assign(
+    async (
+      req: IncomingMessage,
+      res: ServerResponse,
+      next?: (err?: unknown) => void
+    ): Promise<void> => {
+      if (serviceWorker.handle(req, res)) {
+        return
+      }
+      await proxy(req, res, next)
+    },
+    { upgrade: proxy.upgrade.bind(proxy) }
+  )
+
   return {
-    middleware: proxy,
+    middleware,
     handleUpgrade: (req, socket, head) => {
       const resolved = resolveUpgradeUrl(req.url, fullMountPath)
       if (resolved === null) {

@@ -7,9 +7,7 @@ The terminal runs with the Signal K plugin and is available from
 **Webapps > WeTTY Terminal**. By default it connects to `localhost:22` over
 SSH and is only exposed through Signal K.
 
-<p align="center">
-  <img src="doc/screenshot.jpg" alt="WeTTY Terminal in the Signal K admin UI" width="800">
-</p>
+![WeTTY Terminal in the Signal K admin UI](doc/screenshot.jpg)
 
 ## Requirements
 
@@ -38,7 +36,7 @@ npm install
 npm run build
 npm pack
 cd ~/.signalk
-npm install --save /path/to/signalk-wetty/signalk-wetty-0.1.1.tgz
+npm install --save /path/to/signalk-wetty/signalk-wetty-0.2.0.tgz
 ```
 
 Enable **WeTTY Terminal** under **Server > Plugin Config**, then open it from
